@@ -39,7 +39,7 @@ class TrialSelection:
 
     def invert(self) -> Self:
         whole = np.arange(*self.session_range)
-        ret = np.setdiff1d(whole, self._selected_trials)
+        ret = np.setdiff1d(whole, self.selected_trials)
         return TrialSelection(self.dat, ret)
 
     def select_odd(self) -> Self:

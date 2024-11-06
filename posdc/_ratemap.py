@@ -1,10 +1,16 @@
 import numpy as np
+import scipy
 from neuralib.locomotion import running_mask1d
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 
 from ._io import PositionDecodeInput
 
+
+__all__ = [
+    'PositionRateMap',
+    'sort_neuron'
+]
 
 class PositionRateMap:
 
@@ -328,3 +334,6 @@ class PositionBinnedSig:
             r = gaussian_filter1d(r, self.smooth_kernel, mode='wrap')
 
         return r
+
+
+

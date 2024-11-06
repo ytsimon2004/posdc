@@ -9,8 +9,9 @@ from neuralib.calimg.suite2p import normalize_signal
 from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure
 from neuralib.typing import PathLike
+from scipy.interpolate import interp1d
 
-from posdc._plot import plot_decode_actual_position
+from posdc._plot import plot_decode_actual_position, plot_firing_rate, plot_decoding_err
 from ._io import PositionDecodeInput
 from ._ratemap import PositionRateMap
 from ._trial import TrialSelection, random_split
@@ -187,11 +188,9 @@ class PositionDecodeOptions(AbstractParser):
         fr = dat.activity  # (N, T)
         fr = normalize_signal(fr)
         index = trial.session_range
-        start_time = trial.trial_time[0]
-        end_time = trial.trial_time[-1]
 
         if self.running_epoch:
-            fr, fr_time, position = ...  # TODO
+            fr, fr_time, position = self._running_epoch_masking(dat.time, dat.position, dat.velocity, fr, dat.time)
         else:
             fr_time = dat.time
             position = dat.position
@@ -201,9 +200,6 @@ class PositionDecodeOptions(AbstractParser):
         fr = fr[:, t_mask]
         fr_time = fr_time[t_mask]
         position = position[t_mask]
-
-        plt.plot(position)
-        plt.show()
 
         # rate map
         n_bins = int(self.trial_length / self.spatial_bin_size)
@@ -218,13 +214,53 @@ class PositionDecodeOptions(AbstractParser):
         pr = place_bayes(fr.T, rate_map.T, self.spatial_bin_size)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
-        self.plot(fr_time, predict_pos, position)
+        self.plot(fr_time, predict_pos, position, fr, rate_map, self.dat.light_off_time)
 
         return pr, predict_pos
 
-    def plot(self, t, p, a):
-        with plot_figure(None) as ax:
-            plot_decode_actual_position(ax, t, p, a)
+    def plot(self, time, pred_pos, actual_pos, fr, rate_map, light_off_time):
+        with plot_figure(None, 3, 1, figsize=(15, 8)) as _ax:
+            ax = _ax[0]
+            plot_decode_actual_position(ax, time, pred_pos, actual_pos)
+
+            ax = _ax[1]
+            plot_firing_rate(ax, time, fr, rate_map)
+            ax.sharex(_ax[0])
+
+            ax = _ax[2]
+            err = self._calc_wrap_distance(pred_pos, actual_pos)
+            plot_decoding_err(ax, time, err, light_off_time)
+            ax.sharex(_ax[0])
+
+    @staticmethod
+    def _calc_wrap_distance(x: np.ndarray,
+                            y: np.ndarray,
+                            upper_bound: int = 150) -> np.ndarray:
+        """calculate the distance between two points in the wrapped environment"""
+
+        if x.ndim != 1 or y.ndim != 1:
+            raise ValueError('')
+
+        points = np.sort([*zip(x, y)])
+        distances = points[:, 1] - points[:, 0]
+        distances_wrap = upper_bound - distances
+
+        return np.minimum(distances, distances_wrap)
+
+    @staticmethod
+    def _running_epoch_masking(position_time: np.ndarray,
+                               position: np.ndarray,
+                               velocity: np.ndarray,
+                               fr: np.ndarray,
+                               image_time: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        from neuralib.locomotion import running_mask1d
+
+        x = running_mask1d(position_time, velocity)
+        fr_time = position_time[x]
+        fr = interp1d(image_time, fr, axis=fr.ndim - 1, bounds_error=False, fill_value=0.0)(fr_time)
+        position = position[x]
+
+        return fr, fr_time, position
 
 
 if __name__ == '__main__':
