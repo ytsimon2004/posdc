@@ -3,7 +3,6 @@ from functools import cached_property
 from typing import Literal, Final
 
 import numpy as np
-from matplotlib import pyplot as plt
 from neuralib.argp import AbstractParser, argument, union_type
 from neuralib.calimg.suite2p import normalize_signal
 from neuralib.model.bayes_decoding import place_bayes
@@ -22,9 +21,7 @@ TRAIN_TEST_SPLIT_METHOD = Literal['odd', 'even', 'random_split']
 CrossValidateType = TRAIN_TEST_SPLIT_METHOD | int
 
 
-# TODO if interpolated the position every lap
 # TODO position 01 is total length
-# TODO activity unit, negative value
 # TODO temporal bins adjustment
 
 class PositionDecodeOptions(AbstractParser):
@@ -102,7 +99,6 @@ class PositionDecodeOptions(AbstractParser):
     train_test_list: list[tuple[TrialSelection, TrialSelection]]
     trial_length: Final[int] = 150
     """in cm"""
-    position: np.ndarray
     dat: PositionDecodeInput
 
     #
@@ -189,11 +185,14 @@ class PositionDecodeOptions(AbstractParser):
         fr = normalize_signal(fr)
         index = trial.session_range
 
+        #
+        pos = dat.get_interp_position()
+
         if self.running_epoch:
-            fr, fr_time, position = self._running_epoch_masking(dat.time, dat.position, dat.velocity, fr, dat.time)
+            fr, fr_time, position = self._running_epoch_masking(pos.t, pos.p, pos.v, fr, dat.act_time)
         else:
-            fr_time = dat.time
-            position = dat.position
+            fr_time = dat.act_time
+            position = pos.p
 
         train, test = self.train_test
         t_mask = test.masking_time(fr_time)

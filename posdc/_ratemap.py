@@ -1,21 +1,19 @@
 import numpy as np
-import scipy
 from neuralib.locomotion import running_mask1d
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 
 from ._io import PositionDecodeInput
 
-
 __all__ = [
     'PositionRateMap',
-    'sort_neuron'
 ]
+
 
 class PositionRateMap:
 
     def __init__(self, dat: PositionDecodeInput,
-                 n_bins: int = 100,
+                 n_bins: int = 50,
                  sig_norm: bool = True):
 
         self.dat = dat
@@ -36,7 +34,7 @@ class PositionRateMap:
             from neuralib.calimg.suite2p import normalize_signal
             sig = normalize_signal(sig)
 
-        imt = self.dat.time
+        imt = self.dat.act_time
 
         if lap_range is None:
             return imt, sig
@@ -96,6 +94,7 @@ class PositionBinnedSig:
         """
 
         self.dat = dat
+        self.pos = dat.get_interp_position()
 
         match bin_range:
             case int():
@@ -134,31 +133,23 @@ class PositionBinnedSig:
     @property
     def position_time(self) -> np.ndarray:
         """Position Time"""
-        return self.dat.time
+        return self.pos.t
 
     @property
     def position(self) -> np.ndarray:
         """Position in cm"""
-        return self.dat.position
+        return self.pos.p
 
     @property
     def velocity(self) -> np.ndarray:
         """Velocity in cm/s"""
-        return self.dat.velocity
+        return self.pos.v
 
     @property
     def run_mask(self) -> np.ndarray:
         if self._run_mask is None:
-            _ = self.position_time
-            self._run_mask = self.speed_filter(self.position, self.velocity)
+            self._run_mask = running_mask1d(self.position, self.velocity)
         return self._run_mask
-
-    def speed_filter(self, t: np.ndarray, velocity: np.ndarray) -> np.ndarray:
-        return running_mask1d(t,
-                              velocity,
-                              threshold=self.running_velocity_threshold,
-                              merge_gap=self.running_merge_gap,
-                              minimal_time=self.running_duration_threshold)
 
     def _position_mask(self, lap: int) -> np.ndarray:
         """
@@ -334,6 +325,3 @@ class PositionBinnedSig:
             r = gaussian_filter1d(r, self.smooth_kernel, mode='wrap')
 
         return r
-
-
-

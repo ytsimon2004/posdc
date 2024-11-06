@@ -83,7 +83,6 @@ class TrialSelection:
         :return:
             (T,) mask
         """
-
         time = self.dat.lap_time
         index = self.selected_trials
 
@@ -94,11 +93,6 @@ class TrialSelection:
         a = np.zeros_like(time, dtype=bool)  # (L+1,)
         a[index] = True
         ret = a[trial_index]  # (T)
-        # two edge cases for trial index,
-        # 1. t before first lap, trial_index = -1
-        # 2. t after last lap , trial_index = L
-        # a[L] always false since index's value range from 0 to L-1
-        # a[edge_cases] always false
 
         return ret
 
