@@ -3,8 +3,10 @@ from typing_extensions import Self
 
 from ._io import PositionDecodeInput
 
-__all__ = ['TrialSelection',
-           'random_split']
+__all__ = [
+    'TrialSelection',
+    'random_split'
+]
 
 
 class TrialSelection:

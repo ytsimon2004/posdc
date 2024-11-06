@@ -3,15 +3,19 @@ from functools import cached_property
 from typing import Literal, Final
 
 import numpy as np
-import pandas as pd
 from matplotlib import pyplot as plt
 from neuralib.argp import AbstractParser, argument, union_type
+from neuralib.calimg.suite2p import normalize_signal
 from neuralib.model.bayes_decoding import place_bayes
+from neuralib.plot import plot_figure
 from neuralib.typing import PathLike
 
-from posdc._io import PositionDecodeInput
-from posdc._ratemap import PositionRateMap
-from posdc._trial import TrialSelection, random_split
+from posdc._plot import plot_decode_actual_position
+from ._io import PositionDecodeInput
+from ._ratemap import PositionRateMap
+from ._trial import TrialSelection, random_split
+
+__all__ = ['PositionDecodeOptions']
 
 TRAIN_TEST_SPLIT_METHOD = Literal['odd', 'even', 'random_split']
 CrossValidateType = TRAIN_TEST_SPLIT_METHOD | int
@@ -20,6 +24,7 @@ CrossValidateType = TRAIN_TEST_SPLIT_METHOD | int
 # TODO if interpolated the position every lap
 # TODO position 01 is total length
 # TODO activity unit, negative value
+# TODO temporal bins adjustment
 
 class PositionDecodeOptions(AbstractParser):
     DESCRIPTION = ''
@@ -38,10 +43,10 @@ class PositionDecodeOptions(AbstractParser):
     # Decoder Parameter #
     # ================= #
 
-    spatial_bin_size: float | None = argument(
+    spatial_bin_size: float = argument(
         '--spatial-bin',
         metavar='VALUE',
-        default=None,
+        default=1.5,
         help='spatial bin size in cm',
     )
 
@@ -103,13 +108,11 @@ class PositionDecodeOptions(AbstractParser):
     number_iter: int | None
     _current_train_test_index: int | None
 
-    def post_parsing(self):
-        pass
-
     def run(self):
         self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, pos_norm=self.trial_length)
         trial = TrialSelection(self.dat)
         self.train_test_list = self.trial_cross_validation(trial)
+        self.set_number_iter()
 
         for i in range(self.number_iter):
             self._current_train_test_index = i
@@ -125,6 +128,8 @@ class PositionDecodeOptions(AbstractParser):
                 n = self.neuron_random
             case int(n) if n >= n_neurons:
                 n = n_neurons
+            case None:
+                n = n_neurons
             case _:
                 raise ValueError('')
 
@@ -138,6 +143,15 @@ class PositionDecodeOptions(AbstractParser):
     def train_test(self) -> tuple[TrialSelection, TrialSelection]:
         sz = len(self.train_test_list)
         return self.train_test_list[self._current_train_test_index % sz]
+
+    def set_number_iter(self):
+        match self.cross_validation:
+            case int(cv) if cv > 0:
+                self.number_iter = cv
+            case str():
+                self.number_iter = 1
+            case _:
+                raise RuntimeError(f'cv invalid: {self.cross_validation=}')
 
     def trial_cross_validation(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
 
@@ -171,6 +185,7 @@ class PositionDecodeOptions(AbstractParser):
 
         dat = self.dat
         fr = dat.activity  # (N, T)
+        fr = normalize_signal(fr)
         index = trial.session_range
         start_time = trial.trial_time[0]
         end_time = trial.trial_time[-1]
@@ -187,20 +202,29 @@ class PositionDecodeOptions(AbstractParser):
         fr_time = fr_time[t_mask]
         position = position[t_mask]
 
+        plt.plot(position)
+        plt.show()
+
         # rate map
         n_bins = int(self.trial_length / self.spatial_bin_size)
         rate_map = PositionRateMap(dat, n_bins=n_bins).load_binned_data(running_epoch=self.running_epoch)  # (N, L, X)
         rate_map = train.masking_trial_matrix(rate_map, 1)  # (N, L', X)
-        rate_map = np.nanmean(rate_map, axis=1)[neuron_list]
+        rate_map = np.nanmean(rate_map, axis=1)[neuron_list]  # (N, X)
 
         trial_index = np.zeros((index[1] - index[0]), dtype=int)  # (L')
         trial_index[train.selected_trials - index[0]] += 1  # train
         trial_index[test.selected_trials - index[0]] += 2  # test
 
-        pr = place_bayes(fr, rate_map, self.spatial_bin_size)
+        pr = place_bayes(fr.T, rate_map.T, self.spatial_bin_size)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
+        self.plot(fr_time, predict_pos, position)
+
         return pr, predict_pos
+
+    def plot(self, t, p, a):
+        with plot_figure(None) as ax:
+            plot_decode_actual_position(ax, t, p, a)
 
 
 if __name__ == '__main__':

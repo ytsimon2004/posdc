@@ -1,18 +1,20 @@
 import numpy as np
-from neuralib.locomotion import running_mask1d, CircularPosition
+from neuralib.locomotion import running_mask1d
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
+
 from ._io import PositionDecodeInput
 
 
 class PositionRateMap:
 
-    def __init__(self,
-                 dat: PositionDecodeInput,
-                 n_bins: int = 100):
+    def __init__(self, dat: PositionDecodeInput,
+                 n_bins: int = 100,
+                 sig_norm: bool = True):
 
         self.dat = dat
         self.pbs = PositionBinnedSig(dat, bin_range=(0, dat.pos_norm, n_bins))
+        self.sig_norm = sig_norm
 
     def get_signal(self, lap_range: tuple[int, int] | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -24,6 +26,10 @@ class PositionRateMap:
             signal: (S,) if single neuron; (N, S) as multiple neurons
         """
         sig = self.dat.activity
+        if self.sig_norm:
+            from neuralib.calimg.suite2p import normalize_signal
+            sig = normalize_signal(sig)
+
         imt = self.dat.time
 
         if lap_range is None:
