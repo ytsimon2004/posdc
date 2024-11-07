@@ -1,5 +1,6 @@
 import random
 from functools import cached_property
+from pathlib import Path
 from typing import Literal, Final
 
 import numpy as np
@@ -44,7 +45,7 @@ class PositionDecodeOptions(AbstractParser):
     spatial_bin_size: float = argument(
         '--spatial-bin',
         metavar='VALUE',
-        default=1.5,
+        default=3,
         help='spatial bin size in cm',
     )
 
@@ -106,7 +107,7 @@ class PositionDecodeOptions(AbstractParser):
     _current_train_test_index: int | None
 
     def run(self):
-        self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, pos_norm=self.trial_length)
+        self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, trial_length=self.trial_length)
         trial = TrialSelection(self.dat)
         self.train_test_list = self.trial_cross_validation(trial)
         self.set_number_iter()
@@ -135,6 +136,11 @@ class PositionDecodeOptions(AbstractParser):
         ret[random.sample(range(n_neurons), n)] = 1
 
         return np.nonzero(ret)[0]
+
+    @property
+    def bayes_posterior_cache(self) -> Path:
+        file = self.dat.filepath
+        return file.with_name(file.stem + '_bayes_posterior_cache').with_suffix('.npy')
 
     @property
     def train_test(self) -> tuple[TrialSelection, TrialSelection]:
@@ -181,24 +187,9 @@ class PositionDecodeOptions(AbstractParser):
     def run_decode(self, trial: TrialSelection, neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
         dat = self.dat
-        fr = dat.activity  # (N, T)
-        fr = normalize_signal(fr)
         index = trial.session_range
 
-        #
-        pos = dat.get_interp_position()
-
-        if self.running_epoch:
-            fr, fr_time, position = self._running_epoch_masking(pos.t, pos.p, pos.v, fr, dat.act_time)
-        else:
-            fr_time = dat.act_time
-            position = pos.p
-
         train, test = self.train_test
-        t_mask = test.masking_time(fr_time)
-        fr = fr[:, t_mask]
-        fr_time = fr_time[t_mask]
-        position = position[t_mask]
 
         # rate map
         n_bins = int(self.trial_length / self.spatial_bin_size)
@@ -210,10 +201,31 @@ class PositionDecodeOptions(AbstractParser):
         trial_index[train.selected_trials - index[0]] += 1  # train
         trial_index[test.selected_trials - index[0]] += 2  # test
 
-        pr = place_bayes(fr.T, rate_map.T, self.spatial_bin_size)
+        #
+        fr = dat.activity  # (N, T)
+        fr = normalize_signal(fr)
+
+        pos = dat.load_interp_position()
+        if self.running_epoch:
+            fr, time, position = self._running_epoch_masking(pos.t, pos.p, pos.v, fr, dat.act_time)
+        else:
+            time = dat.act_time
+            position = pos.p
+            # TODO interp
+
+        # actual (test set)
+        t_mask = test.masking_time(time)
+        fr = fr[:, t_mask]
+        time = time[t_mask]
+        actual_pos = position[t_mask]
+
+        # predict
+        fr = fr.T  # (T, N)
+        rate_map = rate_map.T  # (X, N)
+        pr = self.load_bayes_posterior(fr, rate_map)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
-        self.plot(fr_time, predict_pos, position, fr, rate_map, self.dat.light_off_time)
+        self.plot(time, predict_pos, actual_pos, fr, rate_map, self.dat.light_off_time)
 
         return pr, predict_pos
 
@@ -227,9 +239,19 @@ class PositionDecodeOptions(AbstractParser):
             ax.sharex(_ax[0])
 
             ax = _ax[2]
-            err = self._calc_wrap_distance(pred_pos, actual_pos)
+            err = self._calc_wrap_distance(pred_pos, actual_pos, self.dat.trial_length)
             plot_decoding_err(ax, time, err, light_off_time)
             ax.sharex(_ax[0])
+
+    def load_bayes_posterior(self, fr: np.ndarray,
+                             rate_map: np.ndarray,
+                             force_compute: bool = False) -> np.ndarray:
+        if not self.bayes_posterior_cache.exists() or force_compute:
+            pr = place_bayes(fr, rate_map, self.spatial_bin_size)
+            np.save(self.bayes_posterior_cache, pr)
+        else:
+            pr = np.load(self.bayes_posterior_cache)
+        return pr
 
     @staticmethod
     def _calc_wrap_distance(x: np.ndarray,
@@ -251,15 +273,15 @@ class PositionDecodeOptions(AbstractParser):
                                position: np.ndarray,
                                velocity: np.ndarray,
                                fr: np.ndarray,
-                               image_time: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                               act_time: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         from neuralib.locomotion import running_mask1d
 
         x = running_mask1d(position_time, velocity)
-        fr_time = position_time[x]
-        fr = interp1d(image_time, fr, axis=fr.ndim - 1, bounds_error=False, fill_value=0.0)(fr_time)
+        time = position_time[x]
+        fr = interp1d(act_time, fr, axis=fr.ndim - 1, bounds_error=False, fill_value=0.0)(time)
         position = position[x]
 
-        return fr, fr_time, position
+        return fr, time, position
 
 
 if __name__ == '__main__':
