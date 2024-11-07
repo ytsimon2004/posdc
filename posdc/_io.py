@@ -1,17 +1,18 @@
+from pathlib import Path
 from typing import NamedTuple
 
+import numpy as np
 import pandas as pd
 from neuralib.locomotion import CircularPosition
-from scipy.interpolate import interp1d
-from typing_extensions import Self
 from neuralib.typing import PathLike
-
-import numpy as np
+from typing_extensions import Self
 
 __all__ = ['PositionDecodeInput']
 
 
 class PositionDecodeInput(NamedTuple):
+    filepath: Path
+    """For cache temporal data"""
     activity: np.ndarray
     """`Array[float, [N, T]]`"""
     act_time: np.ndarray
@@ -26,21 +27,20 @@ class PositionDecodeInput(NamedTuple):
     """Lap index for light off epoch"""
     light_off_time: float
     """Time for light off epoch"""
-
-    pos_norm: int
+    trial_length: int
+    """Trial length in cm"""
 
     # noinspection PyUnresolvedReferences
     @classmethod
     def load_hdf(cls, file: PathLike,
                  use_deconv: bool = False,
-                 pos_norm: int = 150) -> Self:
+                 trial_length: int = 150) -> Self:
         dat = pd.read_hdf(file)
         act = dat.deconv if use_deconv else dat.df_f
-        position = dat.position_raw * pos_norm if pos_norm is not None else dat.position_raw
 
-        return cls(act, dat.frametimes,
-                   position, dat.position_time,
-                   dat.laptimes, dat.lights_off_lap, dat.lights_off_time, pos_norm)
+        return cls(Path(file), act, dat.frametimes,
+                   dat.position_raw, dat.position_time,
+                   dat.laptimes, dat.lights_off_lap, dat.lights_off_time, trial_length)
 
     @property
     def n_neurons(self) -> int:
@@ -63,7 +63,26 @@ class PositionDecodeInput(NamedTuple):
     def trial_index(self) -> np.ndarray:
         return np.arange(self.n_trials)
 
-    def get_interp_position(self, sampling_rate: int = 100) -> CircularPosition:
-        from neuralib.locomotion import interp_pos1d
-        return interp_pos1d(self.position_time, self.position, sampling_rate=sampling_rate)
+    @property
+    def interp_cache(self) -> Path:
+        return self.filepath.with_name(self.filepath.stem + '_position_cache').with_suffix('.npz')
 
+    def load_interp_position(self, sampling_rate: int = 100, force_compute: bool = False) -> CircularPosition:
+        """
+
+        :param sampling_rate:
+        :param force_compute:
+        :return:
+        """
+        from neuralib.locomotion import interp_pos1d
+
+        if not self.interp_cache.exists() or force_compute:
+            pos = interp_pos1d(self.position_time,
+                               self.position,
+                               norm_max_value=self.trial_length,
+                               sampling_rate=sampling_rate)
+            np.savez(self.interp_cache, t=pos.t, p=pos.p, d=pos.d, v=pos.v, trial_time_index=pos.trial_time_index)
+            return pos
+        else:
+            pos = np.load(self.interp_cache, allow_pickle=True)
+            return CircularPosition(pos['t'], pos['p'], pos['d'], pos['v'], pos['trial_time_index'])

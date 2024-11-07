@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 from neuralib.locomotion import running_mask1d
 from scipy.interpolate import interp1d
@@ -17,8 +19,13 @@ class PositionRateMap:
                  sig_norm: bool = True):
 
         self.dat = dat
-        self.pbs = PositionBinnedSig(dat, bin_range=(0, dat.pos_norm, n_bins))
+        self.pbs = PositionBinnedSig(dat, bin_range=(0, dat.trial_length, n_bins))
         self.sig_norm = sig_norm
+
+    @property
+    def ratemap_cache(self) -> Path:
+        file = self.dat.filepath
+        return file.with_name(file.stem + '_ratemap_cache').with_suffix('.npy')
 
     def get_signal(self, lap_range: tuple[int, int] | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -30,6 +37,7 @@ class PositionRateMap:
             signal: (S,) if single neuron; (N, S) as multiple neurons
         """
         sig = self.dat.activity
+
         if self.sig_norm:
             from neuralib.calimg.suite2p import normalize_signal
             sig = normalize_signal(sig)
@@ -49,15 +57,24 @@ class PositionRateMap:
         else:
             return imt[ltx], sig[:, ltx]
 
-    def load_binned_data(self, running_epoch: bool = False, smooth: bool = False) -> np.ndarray:
+    def load_binned_data(self, running_epoch: bool = False,
+                         smooth: bool = False,
+                         force_compute: bool = False) -> np.ndarray:
         """save or load the binned calcium activity data in all neurons (in single etl plane)
 
         :param running_epoch:
-        :param smooth
+        :param smooth:
+        :param force_compute:
         :return: shape (N, L, B) where N = total neurons, L = diff(lap) - 1, B = spatial bins
         """
-        t, signal = self.get_signal(None)
-        act = self.pbs.calc_binned_signal(t, signal, running_epoch=running_epoch, enable_tqdm=True, smooth=smooth)
+
+        if not self.ratemap_cache.exists() or force_compute:
+            t, signal = self.get_signal(None)
+            act = self.pbs.calc_binned_signal(t, signal, running_epoch=running_epoch, enable_tqdm=True, smooth=smooth)
+            np.save(self.ratemap_cache, act)
+        else:
+            act = np.load(self.ratemap_cache)
+
         return act
 
 
@@ -94,7 +111,7 @@ class PositionBinnedSig:
         """
 
         self.dat = dat
-        self.pos = dat.get_interp_position()
+        self.pos = dat.load_interp_position()
 
         match bin_range:
             case int():
