@@ -22,7 +22,6 @@ TRAIN_TEST_SPLIT_METHOD = Literal['odd', 'even', 'random_split']
 CrossValidateType = TRAIN_TEST_SPLIT_METHOD | int
 
 
-# TODO position 01 is total length
 # TODO temporal bins adjustment
 
 class PositionDecodeOptions(AbstractParser):
@@ -85,12 +84,14 @@ class PositionDecodeOptions(AbstractParser):
     neuron_random: int | None = argument(
         '--random',
         metavar='NUMBER',
+        type=int,
         default=None,
         help='number of random neurons'
     )
 
     seed: int | None = argument(
         '--seed',
+        type=int,
         metavar='VALUE',
         default=None,
         help='seed for random number generator'
@@ -193,7 +194,10 @@ class PositionDecodeOptions(AbstractParser):
 
         # rate map
         n_bins = int(self.trial_length / self.spatial_bin_size)
-        rate_map = PositionRateMap(dat, n_bins=n_bins).load_binned_data(running_epoch=self.running_epoch)  # (N, L, X)
+        rate_map = (
+            PositionRateMap(dat, n_bins=n_bins, sig_norm=True)
+            .load_binned_data(running_epoch=self.running_epoch)
+        )  # (N, L, X)
         rate_map = train.masking_trial_matrix(rate_map, 1)  # (N, L', X)
         rate_map = np.nanmean(rate_map, axis=1)[neuron_list]  # (N, X)
 
@@ -202,7 +206,7 @@ class PositionDecodeOptions(AbstractParser):
         trial_index[test.selected_trials - index[0]] += 2  # test
 
         #
-        fr = dat.activity  # (N, T)
+        fr = dat.activity[neuron_list]  # (N, T)
         fr = normalize_signal(fr)
 
         pos = dat.load_interp_position()
@@ -212,6 +216,7 @@ class PositionDecodeOptions(AbstractParser):
             time = dat.act_time
             position = pos.p
             # TODO interp
+            raise NotImplementedError('')
 
         # actual (test set)
         t_mask = test.masking_time(time)
@@ -273,13 +278,34 @@ class PositionDecodeOptions(AbstractParser):
                                position: np.ndarray,
                                velocity: np.ndarray,
                                fr: np.ndarray,
-                               act_time: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                               act_time: np.ndarray,
+                               position_down_sampling: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+
+        :param position_time:
+        :param position:
+        :param velocity:
+        :param fr:
+        :param act_time:
+        :param position_down_sampling: If True, interpolate position to neural activity shape, otherwise, vice versa
+        :return:
+        """
         from neuralib.locomotion import running_mask1d
 
-        x = running_mask1d(position_time, velocity)
-        time = position_time[x]
-        fr = interp1d(act_time, fr, axis=fr.ndim - 1, bounds_error=False, fill_value=0.0)(time)
-        position = position[x]
+        if position_down_sampling:
+            interp_pos = interp1d(position_time, position, bounds_error=False, fill_value=0)(act_time)
+            interp_vel = interp1d(position_time, velocity, bounds_error=False, fill_value=0)(act_time)
+
+            x = running_mask1d(act_time, interp_vel)
+            fr = fr[:, x]
+            position = interp_pos[x]
+            time = act_time[x]
+
+        else:
+            x = running_mask1d(position_time, velocity)
+            time = position_time[x]
+            fr = interp1d(act_time, fr, axis=fr.ndim - 1, bounds_error=False, fill_value=0)(time)
+            position = position[x]
 
         return fr, time, position
 
