@@ -15,7 +15,6 @@ def plot_decode_actual_position(ax: Axes,
                                 actual_pos: np.ndarray,
                                 **kwargs):
     t = np.linspace(time[0], time[-1], len(predicted_pos))
-
     ax.plot(t, predicted_pos, color='r', label='decoded', alpha=0.6, **kwargs)
     ax.plot(t, actual_pos, color='k', label='actual position', alpha=0.4, **kwargs)
     ax.set(ylabel='cm')

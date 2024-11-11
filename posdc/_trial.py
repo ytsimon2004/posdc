@@ -3,10 +3,7 @@ from typing_extensions import Self
 
 from ._io import PositionDecodeInput
 
-__all__ = [
-    'TrialSelection',
-    'random_split'
-]
+__all__ = ['TrialSelection']
 
 
 class TrialSelection:
@@ -26,7 +23,8 @@ class TrialSelection:
         return self._selected_trials
 
     @property
-    def number_of_trials(self):
+    def selected_numbers(self) -> int:
+        """Number of selected trials"""
         return len(self.selected_trials)
 
     @property
@@ -35,7 +33,8 @@ class TrialSelection:
 
     @property
     def session_range(self) -> tuple[int, int]:
-        return int(self.selected_trials[0]), int(self.selected_trials[-1])
+        r = self.dat.trial_index
+        return int(r[0]), int(r[-1])
 
     def invert(self) -> Self:
         whole = np.arange(*self.session_range)
@@ -50,9 +49,19 @@ class TrialSelection:
         even_trials = np.arange(*self.session_range, 2)
         return TrialSelection(self.dat, even_trials)
 
-    def selection_range(self, trial_range: tuple[int, int]) -> Self:
+    def select_range(self, trial_range: tuple[int, int]) -> Self:
         select_trials = np.arange(*trial_range)
         return TrialSelection(self.dat, select_trials)
+
+    def select_odd_in_range(self, trial_range: tuple[int, int]) -> Self:
+        t = self.select_range(trial_range)
+        odd_trials = np.arange(t.selected_trials[0] + 1, t.selected_trials[-1], 2)
+        return TrialSelection(self.dat, odd_trials)
+
+    def select_even_in_range(self, trial_range: tuple[int, int]) -> Self:
+        t = self.select_range(trial_range)
+        odd_trials = np.arange(t.selected_trials[0], t.selected_trials[-1], 2)
+        return TrialSelection(self.dat, odd_trials)
 
     def kfold_cv(self, fold: int = 5) -> list[tuple[Self, Self]]:
         """list of train/test TrialSelection, respectively"""
@@ -68,20 +77,20 @@ class TrialSelection:
 
     def masking_trial_matrix(self, data: np.ndarray, axis: int = 1) -> np.ndarray:
         """
+        Masking data with the given ``selected_trials``
 
-        :param data: (..., L, ...)
-        :param axis:
-        :return:
-            (..., L', ...)
+        :param data: `Array[float, [..., L, ...]]`
+        :param axis: default is 1
+        :return: `Array[float, [..., L', ...]]`
         """
         return np.take(data, self.selected_trials, axis=axis)
 
     def masking_time(self, t: np.ndarray) -> np.ndarray:
         """
+        Create a time mask
 
-        :param t:  (T,) time array in sec
-        :return:
-            (T,) mask
+        :param t: Time array in sec. `Array[float, T]`
+        :return: Mask `Array[bool, T]`
         """
         time = self.dat.lap_time
         index = self.selected_trials
@@ -96,14 +105,14 @@ class TrialSelection:
 
         return ret
 
+    def select_fraction(self, train_fraction: float) -> tuple[Self, Self]:
+        """Select fraction of the trials for training"""
+        total = self.selected_numbers
+        n_test = int(total * (1 - train_fraction))
+        start = np.random.randint(total - n_test) + self.session_range[0]
+        trial_range = (start, start + n_test)
 
-def random_split(trial_select: TrialSelection, train_fraction: float = 0.8) -> tuple[TrialSelection, TrialSelection]:
-    """randomized train test split based on the trial range"""
-    total = trial_select.number_of_trials
-    n_test = int(total * (1 - train_fraction))
-    trial_start = np.random.randint(total - n_test) + trial_select.session_range[0]
-    trial_range = (trial_start, trial_start + n_test)
+        test = self.select_range(trial_range)
+        train = test.invert()
 
-    test = trial_select.selection_range(trial_range)
-    train = test.invert()
-    return train, test
+        return train, test

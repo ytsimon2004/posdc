@@ -63,6 +63,23 @@ class PositionDecodeInput(NamedTuple):
     def trial_index(self) -> np.ndarray:
         return np.arange(self.n_trials)
 
+    def get_light_trange(self) -> tuple[int, int]:
+        x = self.lap_time < self.light_off_time
+        ret = self.trial_index[x]
+
+        return int(ret[0]), int(ret[-1])
+
+    def get_dark_trange(self, tol: int = 4) -> tuple[int, int]:
+        """
+
+        :param tol: tolerance (delay) buffer trials after lights-off
+        :return:
+        """
+        x = self.lap_time >= self.light_off_time
+        ret = self.trial_index[x]
+
+        return int(ret[0]) + tol, int(ret[-1])
+
     @property
     def interp_cache(self) -> Path:
         return self.filepath.with_name(self.filepath.stem + '_position_cache').with_suffix('.npz')

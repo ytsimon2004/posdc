@@ -1,10 +1,10 @@
 import random
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, Final
+from typing import Literal, Final, TypeVar
 
 import numpy as np
-from neuralib.argp import AbstractParser, argument, union_type
+from neuralib.argp import AbstractParser, argument, union_type, int_tuple_type
 from neuralib.calimg.suite2p import normalize_signal
 from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure
@@ -14,12 +14,15 @@ from scipy.interpolate import interp1d
 from posdc._plot import plot_decode_actual_position, plot_firing_rate, plot_decoding_err
 from ._io import PositionDecodeInput
 from ._ratemap import PositionRateMap
-from ._trial import TrialSelection, random_split
+from ._trial import TrialSelection
 
 __all__ = ['PositionDecodeOptions']
 
+SESSION = Literal['light', 'dark']
 TRAIN_TEST_SPLIT_METHOD = Literal['odd', 'even', 'random_split']
-CrossValidateType = TRAIN_TEST_SPLIT_METHOD | int
+
+# odd, even | light, dark | x-fold cv | certain range of trials
+CrossValidateType = TRAIN_TEST_SPLIT_METHOD | SESSION | int | tuple[int, int]
 
 
 # TODO temporal bins adjustment
@@ -66,7 +69,7 @@ class PositionDecodeOptions(AbstractParser):
 
     cross_validation: CrossValidateType = argument(
         '--CV', '--cv-type',
-        type=union_type(int, str),
+        type=union_type(int, str, tuple),
         default='odd',
         help='int type for nfold for model cross validation, otherwise, str type',
     )
@@ -110,7 +113,7 @@ class PositionDecodeOptions(AbstractParser):
     def run(self):
         self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, trial_length=self.trial_length)
         trial = TrialSelection(self.dat)
-        self.train_test_list = self.trial_cross_validation(trial)
+        self.train_test_list = self.train_test_split(trial)
         self.set_number_iter()
 
         for i in range(self.number_iter):
@@ -157,19 +160,45 @@ class PositionDecodeOptions(AbstractParser):
             case _:
                 raise RuntimeError(f'cv invalid: {self.cross_validation=}')
 
-    def trial_cross_validation(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
+    def train_test_split(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
+        """Train test split based on ``cross_validation`` instance"""
 
         match self.cross_validation:
             case str():
                 match self.cross_validation:
+                    case 'light':
+                        train_trial = self.dat.get_light_trange()
+                        train_set = trial.select_range(train_trial)
+                        test_set = train_set.invert()
+
+                    case 'light-odd':
+                        train_trial = self.dat.get_light_trange()
+                        train_set = trial.select_odd_in_range(train_trial)
+                        test_set = train_set.invert()
+
+                        print(f'{train_set.selected_trials=}')
+                        print(f'{test_set.selected_trials=}')
+
+                    case 'light-even':
+                        train_trial = self.dat.get_light_trange()
+                        train_set = trial.select_even_in_range(train_trial)
+                        test_set = train_set.invert()
+
+                    case 'dark':
+                        train_trial = self.dat.get_dark_trange()
+                        train_set = trial.select_range(train_trial)
+                        test_set = train_set.invert()
+
                     case 'even':
                         train_set = trial.select_even()
-                        test_set = trial.select_odd()
+                        test_set = train_set.invert()
+
                     case 'odd':
                         train_set = trial.select_odd()
-                        test_set = trial.select_even()
+                        test_set = train_set.invert()
+
                     case 'random_split':
-                        train_set, test_set = random_split(trial, self.train_fraction)
+                        train_set, test_set = trial.select_fraction(self.train_fraction)
                     case _:
                         raise ValueError('')
 
@@ -250,7 +279,7 @@ class PositionDecodeOptions(AbstractParser):
 
     def load_bayes_posterior(self, fr: np.ndarray,
                              rate_map: np.ndarray,
-                             force_compute: bool = False) -> np.ndarray:
+                             force_compute: bool = True) -> np.ndarray:
         if not self.bayes_posterior_cache.exists() or force_compute:
             pr = place_bayes(fr, rate_map, self.spatial_bin_size)
             np.save(self.bayes_posterior_cache, pr)
