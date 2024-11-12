@@ -52,7 +52,9 @@ class PositionDecodeInput(NamedTuple):
 
     @property
     def activity_sampling_rate(self) -> float:
-        """approximate frame rate"""
+        """
+        :return: Approximate frame rate
+        """
         return np.median(1 / np.diff(self.act_time))
 
     @property
@@ -64,6 +66,9 @@ class PositionDecodeInput(NamedTuple):
         return np.arange(self.n_trials)
 
     def get_light_trange(self) -> tuple[int, int]:
+        """
+        :return: Trial range of the light session (START, STOP)
+        """
         x = self.lap_time < self.light_off_time
         ret = self.trial_index[x]
 
@@ -71,9 +76,8 @@ class PositionDecodeInput(NamedTuple):
 
     def get_dark_trange(self, tol: int = 4) -> tuple[int, int]:
         """
-
         :param tol: tolerance (delay) buffer trials after lights-off
-        :return:
+        :return: Trial range of the dark session (START, STOP)
         """
         x = self.lap_time >= self.light_off_time
         ret = self.trial_index[x]
@@ -86,10 +90,11 @@ class PositionDecodeInput(NamedTuple):
 
     def load_interp_position(self, sampling_rate: int = 100, force_compute: bool = False) -> CircularPosition:
         """
+        Compute or load the ``CircularPosition``
 
-        :param sampling_rate:
-        :param force_compute:
-        :return:
+        :param sampling_rate: Sampling rate for interpolation
+        :param force_compute: Force compute local cache
+        :return: ``CircularPosition``
         """
         from neuralib.locomotion import interp_pos1d
 

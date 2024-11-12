@@ -1,10 +1,10 @@
 import random
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, Final
+from typing import Literal
 
 import numpy as np
-from neuralib.argp import AbstractParser, argument, union_type
+from neuralib.argp import AbstractParser, argument
 from neuralib.calimg.suite2p import normalize_signal
 from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure, ax_merge
@@ -18,17 +18,17 @@ from ._trial import TrialSelection
 
 __all__ = ['PositionDecodeOptions']
 
-SESSION = Literal['light', 'dark']
-TRAIN_TEST_SPLIT_METHOD = Literal['odd', 'even', 'random_split']
+SESSION = Literal[
+    'odd', 'even',
+    'light', 'light-odd', 'light-even',
+    'dark', 'dark-odd', 'dark-even',
+    'random-split',
+    'light-cv', 'dark-cv'  # Train model on a specific session, and test on the rest
+]
 
-# odd, even | light, dark | x-fold cv | certain range of trials
-CrossValidateType = TRAIN_TEST_SPLIT_METHOD | SESSION | int | tuple[int, int]
-
-
-# TODO temporal bins adjustment
 
 class PositionDecodeOptions(AbstractParser):
-    DESCRIPTION = 'Bayes decoding for animal position in an linear environment'
+    DESCRIPTION = "Bayes decoding of animal's position in an linear environment"
 
     file: PathLike = argument(
         '-F', '--file',
@@ -44,6 +44,14 @@ class PositionDecodeOptions(AbstractParser):
     # Decoder Parameter #
     # ================= #
 
+    trial_length: int = argument(
+        '--length',
+        metavar='VALUE',
+        type=int,
+        default=150,
+        help='trial length in cm',
+    )
+
     spatial_bin_size: float = argument(
         '--spatial-bin',
         metavar='VALUE',
@@ -55,7 +63,7 @@ class PositionDecodeOptions(AbstractParser):
         '--temporal-bin',
         metavar='VALUE',
         default=None,
-        help='temporal bin size in second',
+        help='temporal bin size in second, CURRENTLY NOT USE, DIRECTLY USE THE SAMPLING RATE OF THE DF/F',
     )
 
     running_epoch: bool = argument(
@@ -67,15 +75,35 @@ class PositionDecodeOptions(AbstractParser):
     # Train-Test Split #
     # ================ #
 
-    cross_validation: CrossValidateType = argument(
-        '--CV', '--cv-type',
-        type=union_type(int, str, tuple),
-        default='odd',
-        help='int type for nfold for model cross validation, otherwise, str type',
+    train_session: SESSION = argument(
+        '--train-session',
+        metavar='NAME',
+        default='light',
+        help='train the decoder in which behavioral session'
+    )
+
+    cross_validation: int | None = argument(
+        '--cv',
+        type=int,
+        default=None,
+        help='nfold for model cross validation',
+    )
+
+    no_shuffle: bool = argument(
+        '--no-shuffle',
+        help='whether without shuffle the data for non-repeated cv',
+    )
+
+    n_repeats: int | None = argument(
+        '--repeats',
+        type=int,
+        default=None,
+        help='run as repeat kfold cv, make number of results to `n_cv * n_repeats`'
     )
 
     train_fraction: float = argument(
         '--train',
+        type=float,
         default=0.8,
         help='fraction of data for train set if `random_split` in cv, the rest will be utilized in test set'
     )
@@ -100,13 +128,9 @@ class PositionDecodeOptions(AbstractParser):
         help='seed for random number generator'
     )
 
-    #
-    train_test_list: list[tuple[TrialSelection, TrialSelection]]
-    trial_length: Final[int] = 150
-    """in cm"""
-    dat: PositionDecodeInput
-
-    #
+    # runtime set
+    train_test_list: list[tuple[TrialSelection, TrialSelection]] | None
+    dat: PositionDecodeInput | None
     number_iter: int | None
     _current_train_test_index: int | None
 
@@ -152,64 +176,69 @@ class PositionDecodeOptions(AbstractParser):
         return self.train_test_list[self._current_train_test_index % sz]
 
     def set_number_iter(self):
-        match self.cross_validation:
-            case int(cv) if cv > 0:
+        match self.cross_validation, self.n_repeats:
+            case (int(cv), None) if cv > 0:
                 self.number_iter = cv
-            case str():
+            case (int(cv), int()) if cv > 0:
+                self.number_iter = cv * self.n_repeats
+            case (str(), _):
                 self.number_iter = 1
             case _:
                 raise RuntimeError(f'cv invalid: {self.cross_validation=}')
 
+    # noinspection PyTypeChecker
     def train_test_split(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
         """Train test split based on ``cross_validation`` instance"""
 
-        match self.cross_validation:
-            case str():
-                match self.cross_validation:
-                    case 'light':
-                        train_trial = self.dat.get_light_trange()
-                        train_set = trial.select_range(train_trial)
-                        test_set = train_set.invert()
+        if self.train_session is not None:
+            match self.train_session:
+                case 'light':
+                    train_trial = self.dat.get_light_trange()
+                    train_set = trial.select_range(train_trial)
+                    test_set = train_set.invert()
+                case 'light-odd':
+                    train_trial = self.dat.get_light_trange()
+                    train_set = trial.select_odd_in_range(train_trial)
+                    test_set = train_set.invert()
+                case 'light-even':
+                    train_trial = self.dat.get_light_trange()
+                    train_set = trial.select_even_in_range(train_trial)
+                    test_set = train_set.invert()
+                case 'dark':
+                    train_trial = self.dat.get_dark_trange()
+                    train_set = trial.select_range(train_trial)
+                    test_set = train_set.invert()
+                case 'even':
+                    train_set = trial.select_even()
+                    test_set = train_set.invert()
+                case 'odd':
+                    train_set = trial.select_odd()
+                    test_set = train_set.invert()
+                case 'random-split':
+                    train_set, test_set = trial.select_fraction(self.train_fraction)
+                case 'light-cv':
+                    train_trial = self.dat.get_light_trange()
+                    return trial.kfold_cv_in_range(train_trial, self.cross_validation, not self.no_shuffle)
+                case 'dark-cv':
+                    train_trial = self.dat.get_dark_trange()
+                    return trial.kfold_cv_in_range(train_trial, self.cross_validation, not self.no_shuffle)
+                case _:
+                    raise ValueError('')
 
-                    case 'light-odd':
-                        train_trial = self.dat.get_light_trange()
-                        train_set = trial.select_odd_in_range(train_trial)
-                        test_set = train_set.invert()
+            return [(train_set, test_set)]
 
-                    case 'light-even':
-                        train_trial = self.dat.get_light_trange()
-                        train_set = trial.select_even_in_range(train_trial)
-                        test_set = train_set.invert()
-
-                    case 'dark':
-                        train_trial = self.dat.get_dark_trange()
-                        train_set = trial.select_range(train_trial)
-                        test_set = train_set.invert()
-
-                    case 'even':
-                        train_set = trial.select_even()
-                        test_set = train_set.invert()
-
-                    case 'odd':
-                        train_set = trial.select_odd()
-                        test_set = train_set.invert()
-
-                    case 'random_split':
-                        train_set, test_set = trial.select_fraction(self.train_fraction)
-                    case _:
-                        raise ValueError('')
-
-                return [(train_set, test_set)]
-
-            case int():
-                match self.cross_validation:
-                    case 0:  # no cv
-                        return [(trial, trial)]
-                    case _:
-                        return trial.kfold_cv(int(self.cross_validation))
-
-            case _:
-                raise TypeError('')
+        elif isinstance(self.cross_validation, int) and isinstance(self.n_repeats, int):
+            match self.cross_validation, self.n_repeats:
+                case (0, None):  # no cv
+                    return [(trial, trial)]
+                case (i, None) if i > 0:
+                    return trial.kfold_cv(self.cross_validation, self.no_shuffle)
+                case (i, int()) if i > 0:
+                    return trial.repeat_kfold_cv(self.cross_validation, n_repeats=self.n_repeats, state=self.seed)
+                case _:
+                    raise ValueError('')
+        else:
+            raise RuntimeError('unsupported format train-test split')
 
     def run_decode(self, trial: TrialSelection, neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
@@ -227,7 +256,7 @@ class PositionDecodeOptions(AbstractParser):
         rate_map = train.masking_trial_matrix(rate_map, 1)  # (N, L', X)
         rate_map = np.nanmean(rate_map, axis=1)[neuron_list]  # (N, X)
 
-        trial_index = np.zeros((index[1] - index[0]), dtype=int)  # (L')
+        trial_index = np.zeros((index[1] - index[0]) + 1, dtype=int)  # (L')
         trial_index[train.selected_trials - index[0]] += 1  # train
         trial_index[test.selected_trials - index[0]] += 2  # test
 

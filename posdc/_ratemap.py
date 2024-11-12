@@ -7,9 +7,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from ._io import PositionDecodeInput
 
-__all__ = [
-    'PositionRateMap',
-]
+__all__ = ['PositionRateMap']
 
 
 class PositionRateMap:
@@ -19,7 +17,7 @@ class PositionRateMap:
                  sig_norm: bool = True):
 
         self.dat = dat
-        self.pbs = PositionBinnedSig(dat, bin_range=(0, dat.trial_length, n_bins))
+        self.pbs = _PositionBinnedSig(dat, bin_range=(0, dat.trial_length, n_bins))
         self.sig_norm = sig_norm
 
     @property
@@ -32,9 +30,7 @@ class PositionRateMap:
         activities, baseline activities and imaging time in certain interval of laps (nlaps)
 
         :param lap_range: lap (trial) number from start to end (excluded)
-        :return:
-            image_time: (S,)
-            signal: (S,) if single neuron; (N, S) as multiple neurons
+        :return: image_time: `Array[float, T]` and signal: `Array[float, [N, T]|T]`
         """
         sig = self.dat.activity
 
@@ -62,10 +58,10 @@ class PositionRateMap:
                          force_compute: bool = False) -> np.ndarray:
         """save or load the binned calcium activity data in all neurons (in single etl plane)
 
-        :param running_epoch:
-        :param smooth:
-        :param force_compute:
-        :return: shape (N, L, B) where N = total neurons, L = diff(lap) - 1, B = spatial bins
+        :param running_epoch: Whether calculate only running epoch
+        :param smooth: Whether do the smoothing
+        :param force_compute: Force compute local cache
+        :return: `Array[float, [N, L, B]]`
         """
 
         if not self.ratemap_cache.exists() or force_compute:
@@ -78,9 +74,11 @@ class PositionRateMap:
         return act
 
 
-# ================== #
+# ================= #
+# PositionBinnedSig #
+# ================= #
 
-class PositionBinnedSig:
+class _PositionBinnedSig:
     """
     Calculation of Position Binned Signal
 
