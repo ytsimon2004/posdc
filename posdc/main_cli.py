@@ -1,18 +1,18 @@
 import random
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, Final, TypeVar
+from typing import Literal, Final
 
 import numpy as np
-from neuralib.argp import AbstractParser, argument, union_type, int_tuple_type
+from neuralib.argp import AbstractParser, argument, union_type
 from neuralib.calimg.suite2p import normalize_signal
 from neuralib.model.bayes_decoding import place_bayes
-from neuralib.plot import plot_figure
+from neuralib.plot import plot_figure, ax_merge
 from neuralib.typing import PathLike
 from scipy.interpolate import interp1d
 
-from posdc._plot import plot_decode_actual_position, plot_firing_rate, plot_decoding_err
 from ._io import PositionDecodeInput
+from ._plot import *
 from ._ratemap import PositionRateMap
 from ._trial import TrialSelection
 
@@ -28,7 +28,7 @@ CrossValidateType = TRAIN_TEST_SPLIT_METHOD | SESSION | int | tuple[int, int]
 # TODO temporal bins adjustment
 
 class PositionDecodeOptions(AbstractParser):
-    DESCRIPTION = ''
+    DESCRIPTION = 'Bayes decoding for animal position in an linear environment'
 
     file: PathLike = argument(
         '-F', '--file',
@@ -176,9 +176,6 @@ class PositionDecodeOptions(AbstractParser):
                         train_set = trial.select_odd_in_range(train_trial)
                         test_set = train_set.invert()
 
-                        print(f'{train_set.selected_trials=}')
-                        print(f'{test_set.selected_trials=}')
-
                     case 'light-even':
                         train_trial = self.dat.get_light_trange()
                         train_set = trial.select_even_in_range(train_trial)
@@ -236,7 +233,7 @@ class PositionDecodeOptions(AbstractParser):
 
         #
         fr = dat.activity[neuron_list]  # (N, T)
-        fr = normalize_signal(fr)
+        fr = fr_raw = normalize_signal(fr)
 
         pos = dat.load_interp_position()
         if self.running_epoch:
@@ -259,20 +256,29 @@ class PositionDecodeOptions(AbstractParser):
         pr = self.load_bayes_posterior(fr, rate_map)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
-        self.plot(time, predict_pos, actual_pos, fr, rate_map, self.dat.light_off_time)
+        self.plot_decode_result(time, predict_pos, actual_pos, fr_raw.T, rate_map, self.dat.light_off_time)
 
         return pr, predict_pos
 
-    def plot(self, time, pred_pos, actual_pos, fr, rate_map, light_off_time):
-        with plot_figure(None, 3, 1, figsize=(15, 8)) as _ax:
+    def plot_decode_result(self, time, pred_pos, actual_pos, fr_raw, rate_map, light_off_time):
+        """
+
+        :param time: `Array[float, T]`
+        :param pred_pos: `Array[float, T]`
+        :param actual_pos: `Array[float, T]`
+        :param fr_raw: Raw firing. `Array[float, [Traw, N]]`
+        :param rate_map: `Array[float, [T, N]]`
+        :param light_off_time: Time of light off in sec
+        """
+        with plot_figure(None, 4, 1, figsize=(15, 8)) as _ax:
             ax = _ax[0]
             plot_decode_actual_position(ax, time, pred_pos, actual_pos)
 
-            ax = _ax[1]
-            plot_firing_rate(ax, time, fr, rate_map)
+            ax = ax_merge(_ax)[1:3]
+            plot_firing_rate(ax, time, fr_raw, rate_map)
             ax.sharex(_ax[0])
 
-            ax = _ax[2]
+            ax = _ax[3]
             err = self._calc_wrap_distance(pred_pos, actual_pos, self.dat.trial_length)
             plot_decoding_err(ax, time, err, light_off_time)
             ax.sharex(_ax[0])
@@ -322,8 +328,8 @@ class PositionDecodeOptions(AbstractParser):
         from neuralib.locomotion import running_mask1d
 
         if position_down_sampling:
-            interp_pos = interp1d(position_time, position, bounds_error=False, fill_value=0)(act_time)
-            interp_vel = interp1d(position_time, velocity, bounds_error=False, fill_value=0)(act_time)
+            interp_pos = interp1d(position_time, position, bounds_error=False, fill_value='extrapolate')(act_time)
+            interp_vel = interp1d(position_time, velocity, bounds_error=False, fill_value='extrapolate')(act_time)
 
             x = running_mask1d(act_time, interp_vel)
             fr = fr[:, x]
