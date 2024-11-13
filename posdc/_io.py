@@ -11,22 +11,43 @@ __all__ = ['PositionDecodeInput']
 
 
 class PositionDecodeInput(NamedTuple):
+    """
+    `Dimension parameters`:
+
+        N = Number of neurons
+
+        T = Number of image pulse
+
+        P = Number of position signal
+
+        L = Number of laps(trials)
+
+    """
+
     filepath: Path
     """For cache temporal data"""
+
     activity: np.ndarray
-    """`Array[float, [N, T]]`"""
+    """Neural activity. `Array[float, [N, T]]`"""
+
     act_time: np.ndarray
-    """`Array[float, T]`"""
+    """Time for neural activity. `Array[float, T]`"""
+
     position: np.ndarray
-    """`Array[float, P]`"""
+    """Animal's position. `Array[float, P]`"""
+
     position_time: np.ndarray
-    """`Array[float, P]`"""
+    """Time for animal's position. `Array[float, P]`"""
+
     lap_time: np.ndarray
-    """`Array[float, L]`"""
+    """Time for each laps(trial). `Array[float, L]`"""
+
     light_off_lap: int
     """Lap index for light off epoch"""
+
     light_off_time: float
     """Time for light off epoch"""
+
     trial_length: int
     """Trial length in cm"""
 
@@ -35,6 +56,14 @@ class PositionDecodeInput(NamedTuple):
     def load_hdf(cls, file: PathLike,
                  use_deconv: bool = False,
                  trial_length: int = 150) -> Self:
+        """
+        Load data from *.hdf
+
+        :param file: Filepath
+        :param use_deconv: Whether deconvolved, otherwise use df/f
+        :param trial_length: Trial length in cm
+        :return: ``PositionDecodeInput``
+        """
         dat = pd.read_hdf(file)
         act = dat.deconv if use_deconv else dat.df_f
 
@@ -44,17 +73,17 @@ class PositionDecodeInput(NamedTuple):
 
     @property
     def n_neurons(self) -> int:
+        """Number of neurons"""
         return self.activity.shape[0]
 
     @property
     def n_samples(self) -> int:
+        """Number of activity samples"""
         return self.activity.shape[1]
 
     @property
     def activity_sampling_rate(self) -> float:
-        """
-        :return: Approximate frame rate
-        """
+        """Approximate frame rate"""
         return np.median(1 / np.diff(self.act_time))
 
     @property
@@ -66,9 +95,7 @@ class PositionDecodeInput(NamedTuple):
         return np.arange(self.n_trials)
 
     def get_light_trange(self) -> tuple[int, int]:
-        """
-        :return: Trial range of the light session (START, STOP)
-        """
+        """Trial range of the light session (START, STOP)"""
         x = self.lap_time < self.light_off_time
         ret = self.trial_index[x]
 
@@ -76,6 +103,8 @@ class PositionDecodeInput(NamedTuple):
 
     def get_dark_trange(self, tol: int = 4) -> tuple[int, int]:
         """
+        Trial range of the dark session (START, STOP)
+
         :param tol: tolerance (delay) buffer trials after lights-off
         :return: Trial range of the dark session (START, STOP)
         """
@@ -85,7 +114,7 @@ class PositionDecodeInput(NamedTuple):
         return int(ret[0]) + tol, int(ret[-1])
 
     @property
-    def interp_cache(self) -> Path:
+    def position_cache_file(self) -> Path:
         return self.filepath.with_name(self.filepath.stem + '_position_cache').with_suffix('.npz')
 
     def load_interp_position(self, sampling_rate: int = 100, force_compute: bool = False) -> CircularPosition:
@@ -93,18 +122,18 @@ class PositionDecodeInput(NamedTuple):
         Compute or load the ``CircularPosition``
 
         :param sampling_rate: Sampling rate for interpolation
-        :param force_compute: Force compute local cache
+        :param force_compute: Force recompute local cache
         :return: ``CircularPosition``
         """
         from neuralib.locomotion import interp_pos1d
 
-        if not self.interp_cache.exists() or force_compute:
+        if not self.position_cache_file.exists() or force_compute:
             pos = interp_pos1d(self.position_time,
                                self.position,
                                norm_max_value=self.trial_length,
                                sampling_rate=sampling_rate)
-            np.savez(self.interp_cache, t=pos.t, p=pos.p, d=pos.d, v=pos.v, trial_time_index=pos.trial_time_index)
+            np.savez(self.position_cache_file, t=pos.t, p=pos.p, d=pos.d, v=pos.v, trial_time_index=pos.trial_time_index)
             return pos
         else:
-            pos = np.load(self.interp_cache, allow_pickle=True)
+            pos = np.load(self.position_cache_file, allow_pickle=True)
             return CircularPosition(pos['t'], pos['p'], pos['d'], pos['v'], pos['trial_time_index'])

@@ -12,22 +12,29 @@ __all__ = [
 def plot_decode_actual_position(ax: Axes,
                                 time: np.ndarray,
                                 predicted_pos: np.ndarray,
-                                actual_pos: np.ndarray,
-                                **kwargs):
-    ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, markerfacecolor=None, **kwargs)
-    ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3, **kwargs)
+                                actual_pos: np.ndarray):
+    """
+    Plot decoded/actual animal's position
+
+    :param ax: ``Axes``
+    :param time: Time for animal's position. `Array[float, T]`
+    :param predicted_pos: Predicted animal's position. `Array[float, T]`
+    :param actual_pos: Actual animal's position. `Array[float, T]`
+    """
+    ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, markerfacecolor=None)
+    ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3)
     ax.set(ylabel='position(cm)')
     ax.legend()
 
 
-def plot_firing_rate(ax: Axes, time: np.ndarray, fr, **kwargs):
+def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, **kwargs):
     """
-    Heatmap for Firing rate of all cells
+    Heatmap for activity
 
-    :param ax:
-    :param time:
-    :param fr:
-    :return:
+    :param ax: ``Axes``
+    :param time: Activity time. `Array[float, T]`
+    :param fr: Neural activity. `Array[float, [N, T]]`
+    :param kwargs: Additional arguments pass to ``ax.set()``
     """
     ax.imshow(fr.T,
               aspect='auto',
@@ -40,13 +47,12 @@ def plot_firing_rate(ax: Axes, time: np.ndarray, fr, **kwargs):
 
 def plot_decoding_err(ax: Axes, time: np.ndarray, decode_err: np.ndarray, cutoff: float):
     """
-    plot decoding error as a function of temporal bins
+    Plot decoding error as a function of temporal bins
 
-    :param ax:
-    :param time:
-    :param decode_err
-    :param cutoff:
-    :return:
+    :param ax: ``Axes``
+    :param time: Time for decoding error. `Array[float, T]`
+    :param decode_err: Decoding error. `Array[float, T]`
+    :param cutoff: Axvline cutoff for the different recording session (condition)
     """
     ax.plot(time, decode_err, 'k.', alpha=0.3, label='frame-wise')
     smooth_err = gaussian_filter1d(decode_err, 10)

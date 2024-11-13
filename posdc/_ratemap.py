@@ -14,10 +14,18 @@ class PositionRateMap:
 
     def __init__(self, dat: PositionDecodeInput,
                  n_bins: int = 50,
-                 sig_norm: bool = True):
+                 sig_norm: bool = True,
+                 force_compute: bool = False):
+        """
+
+        :param dat:
+        :param n_bins:
+        :param sig_norm: Do 0 1 normalization
+        :param force_compute: Force compute local position cache
+        """
 
         self.dat = dat
-        self.pbs = _PositionBinnedSig(dat, bin_range=(0, dat.trial_length, n_bins))
+        self.pbs = _PositionBinnedSig(dat, bin_range=(0, dat.trial_length, n_bins), force_compute=force_compute)
         self.sig_norm = sig_norm
 
     @property
@@ -45,7 +53,7 @@ class PositionRateMap:
 
         lt = self.dat.lap_time
         lt0 = lt[lap_range[0]]
-        lt1 = lt[lap_range[1] - 1]  # lap_event value start from 1, avoid out of bound 'IndexError'
+        lt1 = lt[lap_range[1] - 1]
         ltx = np.logical_and(lt0 <= imt, imt <= lt1)
 
         if sig.ndim == 1:
@@ -56,11 +64,11 @@ class PositionRateMap:
     def load_binned_data(self, running_epoch: bool = False,
                          smooth: bool = False,
                          force_compute: bool = False) -> np.ndarray:
-        """save or load the binned calcium activity data in all neurons (in single etl plane)
+        """save or load the binned calcium activity data in all neurons.
 
         :param running_epoch: Whether calculate only running epoch
         :param smooth: Whether do the smoothing
-        :param force_compute: Force compute local cache
+        :param force_compute: Force compute local ratemap cache
         :return: `Array[float, [N, L, B]]`
         """
 
@@ -102,14 +110,17 @@ class _PositionBinnedSig:
             *,
             bin_range: int | tuple[int, int] | tuple[int, int, int] = (0, 150, 150),
             smooth_kernel: int = 3,
+            force_compute: bool = False
     ):
         """
+        :param dat: ``PositionDecodeInput``
         :param bin_range: END or tuple of (start, end, number)
         :param smooth_kernel: Smoothing gaussian kernel after binned
+        :param force_compute: Force compute local position cache
         """
 
         self.dat = dat
-        self.pos = dat.load_interp_position()
+        self.pos = dat.load_interp_position(force_compute=force_compute)
 
         match bin_range:
             case int():
