@@ -16,22 +16,26 @@ def plot_decode_actual_position(ax: Axes,
                                 **kwargs):
     ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, markerfacecolor=None, **kwargs)
     ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3, **kwargs)
-    ax.set(ylabel='cm')
+    ax.set(ylabel='position(cm)')
     ax.legend()
 
 
-def plot_firing_rate(ax: Axes, time: np.ndarray, fr, rate_map: np.ndarray):
-    """heatmap for sorted firing rate of all cells"""
-    sort_idx = _sort_neuron(rate_map.T)
-    fr = fr[:, sort_idx]
+def plot_firing_rate(ax: Axes, time: np.ndarray, fr, **kwargs):
+    """
+    Heatmap for Firing rate of all cells
 
+    :param ax:
+    :param time:
+    :param fr:
+    :return:
+    """
     ax.imshow(fr.T,
               aspect='auto',
-              cmap='magma',
+              cmap='binary',
               interpolation='none',
               origin='lower',
               extent=(0, np.max(time), 0, fr.shape[1]))
-    ax.set(ylabel='# neurons')
+    ax.set(**kwargs)
 
 
 def plot_decoding_err(ax: Axes, time: np.ndarray, decode_err: np.ndarray, cutoff: float):
@@ -51,14 +55,3 @@ def plot_decoding_err(ax: Axes, time: np.ndarray, decode_err: np.ndarray, cutoff
     ax.set(xlabel='time(sec)', ylabel='decoding error (cm)', ylim=(0, 70))
     ax.legend()
 
-
-def _sort_neuron(data: np.ndarray) -> np.ndarray:
-    """
-    sort neurons based on maximal activity along the belt
-
-    :param data: 2d binned calactivity data. (N, B)
-    :return: sorted indices
-    """
-    m_filter = gaussian_filter1d(data, 3, axis=1)
-    m_argmax = np.argmax(m_filter, axis=1)
-    return np.argsort(m_argmax)

@@ -10,6 +10,7 @@ from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure, ax_merge
 from neuralib.typing import PathLike
 from scipy.interpolate import interp1d
+from scipy.ndimage import gaussian_filter1d
 
 from ._io import PositionDecodeInput
 from ._plot import *
@@ -128,6 +129,22 @@ class PositionDecodeOptions(AbstractParser):
         help='seed for random number generator'
     )
 
+    # ================= #
+    # RasterMap Options #
+    # ================= #
+
+    rastermap_sort: bool = argument(
+        '--rastermap',
+        help='sort activity heatmap using rastermap'
+    )
+
+    rastermap_bin_size: int = argument(
+        '--rastermap-bin',
+        metavar='VALUE',
+        default=20,
+        help='bin size for number of total neurons',
+    )
+
     # runtime set
     train_test_list: list[tuple[TrialSelection, TrialSelection]] | None
     dat: PositionDecodeInput | None
@@ -181,10 +198,8 @@ class PositionDecodeOptions(AbstractParser):
                 self.number_iter = cv
             case (int(cv), int()) if cv > 0:
                 self.number_iter = cv * self.n_repeats
-            case (str(), _):
-                self.number_iter = 1
             case _:
-                raise RuntimeError(f'cv invalid: {self.cross_validation=}')
+                self.number_iter = 1
 
     # noinspection PyTypeChecker
     def train_test_split(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
@@ -241,6 +256,14 @@ class PositionDecodeOptions(AbstractParser):
             raise RuntimeError('unsupported format train-test split')
 
     def run_decode(self, trial: TrialSelection, neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+
+        :param trial:
+        :param neuron_list:
+        :return:
+        - pr: matrix of posterior probabilities. `Array[float, [T, X]]`.
+        - predict_pos: Predicted position. `Array[float, T]`
+        """
 
         dat = self.dat
         index = trial.session_range
@@ -260,10 +283,20 @@ class PositionDecodeOptions(AbstractParser):
         trial_index[train.selected_trials - index[0]] += 1  # train
         trial_index[test.selected_trials - index[0]] += 2  # test
 
-        #
+        # fr
         fr = dat.activity[neuron_list]  # (N, T)
         fr = fr_raw = normalize_signal(fr)
 
+        if self.rastermap_sort:
+            from ._rastermap import run_rastermap
+            fr_raw = run_rastermap(fr_raw, self.rastermap_bin_size).super_neurons
+            ylabel = '#super_neurons'
+        else:
+            sort_idx = self._sort_position(rate_map)
+            fr_raw = fr_raw[sort_idx]
+            ylabel = '#neurons'
+
+        # position
         pos = dat.load_interp_position()
         if self.running_epoch:
             fr, time, position = self._running_epoch_masking(pos.t, pos.p, pos.v, fr, dat.act_time)
@@ -285,30 +318,30 @@ class PositionDecodeOptions(AbstractParser):
         pr = self.load_bayes_posterior(fr, rate_map)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
-        self.plot_decode_result(time, predict_pos, actual_pos, fr_raw.T, rate_map, self.dat.light_off_time)
+        self.plot_decode_result(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel)
 
         return pr, predict_pos
 
-    def plot_decode_result(self, time, pred_pos, actual_pos, fr_raw, rate_map, light_off_time):
+    def plot_decode_result(self, time, pred_pos, actual_pos, fr_raw, light_off_time, ylabel):
         """
 
         :param time: `Array[float, T]`
         :param pred_pos: `Array[float, T]`
         :param actual_pos: `Array[float, T]`
         :param fr_raw: Raw firing. `Array[float, [Traw, N]]`
-        :param rate_map: `Array[float, [T, N]]`
         :param light_off_time: Time of light off in sec
+        :param ylabel: ylabel for the firing activity
         """
         with plot_figure(None, 4, 1, figsize=(15, 8)) as _ax:
             ax = _ax[0]
             plot_decode_actual_position(ax, time, pred_pos, actual_pos)
 
             ax = ax_merge(_ax)[1:3]
-            plot_firing_rate(ax, time, fr_raw, rate_map)
+            plot_firing_rate(ax, time, fr_raw, ylabel=ylabel)
             ax.sharex(_ax[0])
 
             ax = _ax[3]
-            err = self._calc_wrap_distance(pred_pos, actual_pos, self.dat.trial_length)
+            err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
             plot_decoding_err(ax, time, err, light_off_time)
             ax.sharex(_ax[0])
 
@@ -323,10 +356,17 @@ class PositionDecodeOptions(AbstractParser):
         return pr
 
     @staticmethod
-    def _calc_wrap_distance(x: np.ndarray,
-                            y: np.ndarray,
-                            upper_bound: int = 150) -> np.ndarray:
-        """calculate the distance between two points in the wrapped environment"""
+    def _wrap_diff(x: np.ndarray,
+                   y: np.ndarray,
+                   upper_bound: int = 150) -> np.ndarray:
+        """
+        Calculate the distance between two points in the wrapped environment
+
+        :param x: Position x. `Array[float, T]`
+        :param y: Position y. `Array[float, T]`
+        :param upper_bound: Upper bound of the distance in cm
+        :return: Distance between x and y in cm. `Array[float, T]`
+        """
 
         if x.ndim != 1 or y.ndim != 1:
             raise ValueError('')
@@ -372,6 +412,13 @@ class PositionDecodeOptions(AbstractParser):
             position = position[x]
 
         return fr, time, position
+
+    @staticmethod
+    def _sort_position(data: np.ndarray) -> np.ndarray:
+        """sort neurons based on maximal activity along the track position"""
+        m_filter = gaussian_filter1d(data, 3, axis=1)
+        m_argmax = np.argmax(m_filter, axis=1)
+        return np.argsort(m_argmax)
 
 
 if __name__ == '__main__':

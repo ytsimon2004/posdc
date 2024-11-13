@@ -19,5 +19,6 @@ classifiers = [
 
 dependencies = [
     "neura-library",
-    "typing-extensions"
+    "typing-extensions",
+    "rastermap"
 ]
