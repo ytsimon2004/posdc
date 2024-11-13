@@ -72,15 +72,25 @@ class TrialSelection:
         odd_trials = np.arange(t.selected_trials[0], t.selected_trials[-1], 2)
         return TrialSelection(self.dat, odd_trials)
 
-    def kfold_cv(self, fold: int = 5, shuffle: bool = True) -> list[tuple[Self, Self]]:
+    def kfold_cv(self,
+                 fold: int = 5,
+                 shuffle: bool = True,
+                 n_repeats: int | None = 10,
+                 state: int | None = None) -> list[tuple[Self, Self]]:
         """
 
         :param fold: Number of folds
         :param shuffle: Whether to shuffle the data before splitting into batches
+        :param n_repeats:
+        :param state:
         :return:
         """
-        from sklearn.model_selection import KFold
-        kfold_iter = KFold(fold, shuffle=shuffle)
+        from sklearn.model_selection import KFold, RepeatedKFold
+
+        if n_repeats is None:
+            kfold_iter = KFold(fold, shuffle=shuffle)
+        else:
+            kfold_iter = RepeatedKFold(n_splits=fold, n_repeats=n_repeats, random_state=state)
 
         ret = []
         for train_index, test_index in kfold_iter.split(self.selected_trials):
@@ -90,23 +100,12 @@ class TrialSelection:
 
         return ret
 
-    def repeat_kfold_cv(self, fold: int = 5,
-                        n_repeats: int = 10,
-                        state: int | None = None) -> list[tuple[Self, Self]]:
-        from sklearn.model_selection import RepeatedKFold
-        kfold_iter = RepeatedKFold(n_splits=fold, n_repeats=n_repeats, random_state=state)
-
-        ret = []
-        for train_index, test_index in kfold_iter.split(self.selected_trials):
-            train = TrialSelection(self.dat, train_index)
-            test = TrialSelection(self.dat, test_index)
-            ret.append((train, test))
-
-        return ret
-
-    def kfold_cv_in_range(self, trial_range: tuple[int, int],
+    def kfold_cv_in_range(self,
+                          trial_range: tuple[int, int],
                           fold: int = 5,
-                          shuffle: bool = True) -> list[tuple[Self, Self]]:
+                          shuffle: bool = True,
+                          n_repeats: int = 10,
+                          state: int | None = None) -> list[tuple[Self, Self]]:
         """
         Making K-Fold for a certain of trial range for **TRAINING** set,
         and test the model on the rest of the trials
@@ -114,10 +113,16 @@ class TrialSelection:
         :param trial_range: Trial range of for **TRAINING** of the model
         :param fold: Number of folds
         :param shuffle: Whether to shuffle the data before splitting into batches
+        :param n_repeats:
+        :param state:
         :return:
         """
-        from sklearn.model_selection import KFold
-        kfold_iter = KFold(fold, shuffle=shuffle)
+        from sklearn.model_selection import KFold, RepeatedKFold
+
+        if n_repeats is None:
+            kfold_iter = KFold(fold, shuffle=shuffle)
+        else:
+            kfold_iter = RepeatedKFold(n_splits=fold, n_repeats=n_repeats, random_state=state)
 
         ret = []
         t = self.select_range(trial_range)
@@ -130,9 +135,6 @@ class TrialSelection:
             ret.append((train, test))
 
         return ret
-
-    def repeat_kfold_cv_in_range(self):
-        pass
 
     def masking_trial_matrix(self, data: np.ndarray, axis: int = 1) -> np.ndarray:
         """

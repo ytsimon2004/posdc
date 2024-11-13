@@ -149,6 +149,15 @@ class PositionDecodeOptions(AbstractParser):
         help='bin size for number of total neurons',
     )
 
+    # ============ #
+    # Plot Options #
+    # ============ #
+
+    ignore_foreach_plot: bool = argument(
+        '--ignore-foreach',
+        help='whether to ignore foreach cv plot, and only plot the summary result',
+    )
+
     # runtime set
     train_test_list: list[tuple[TrialSelection, TrialSelection]] | None
     """List of train/test trial_selection"""
@@ -221,58 +230,96 @@ class PositionDecodeOptions(AbstractParser):
             case _:
                 self.number_iter = 1
 
-    # noinspection PyTypeChecker
     def train_test_split(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
-        """Train test split based on ``cross_validation`` instance"""
-        if self.train_session is not None:
-            match self.train_session:
-                case 'light':
-                    train_trial = self.dat.get_light_trange()
-                    train_set = trial.select_range(train_trial)
-                    test_set = train_set.invert()
-                case 'light-odd':
-                    train_trial = self.dat.get_light_trange()
-                    train_set = trial.select_odd_in_range(train_trial)
-                    test_set = train_set.invert()
-                case 'light-even':
-                    train_trial = self.dat.get_light_trange()
-                    train_set = trial.select_even_in_range(train_trial)
-                    test_set = train_set.invert()
-                case 'dark':
-                    train_trial = self.dat.get_dark_trange()
-                    train_set = trial.select_range(train_trial)
-                    test_set = train_set.invert()
-                case 'even':
-                    train_set = trial.select_even()
-                    test_set = train_set.invert()
-                case 'odd':
-                    train_set = trial.select_odd()
-                    test_set = train_set.invert()
-                case 'random-split':
-                    train_set, test_set = trial.select_fraction(self.train_fraction)
-                case 'light-cv':
-                    train_trial = self.dat.get_light_trange()
-                    return trial.kfold_cv_in_range(train_trial, self.cross_validation, not self.no_shuffle)
-                case 'dark-cv':
-                    train_trial = self.dat.get_dark_trange()
-                    return trial.kfold_cv_in_range(train_trial, self.cross_validation, not self.no_shuffle)
-                case _:
-                    raise ValueError('')
+        match self.train_session, self.cross_validation, self.n_repeats:
 
-            return [(train_set, test_set)]
+            # train decoder on all the even trials and test on all the odd trials
+            case ('even', None, None):
+                train = trial.select_even()
+                test = train.invert()
 
-        elif isinstance(self.cross_validation, int) and isinstance(self.n_repeats, int):
-            match self.cross_validation, self.n_repeats:
-                case (0, None):  # no cv
-                    return [(trial, trial)]
-                case (i, None) if i > 0:
-                    return trial.kfold_cv(self.cross_validation, self.no_shuffle)
-                case (i, int()) if i > 0:
-                    return trial.repeat_kfold_cv(self.cross_validation, n_repeats=self.n_repeats, state=self.seed)
-                case _:
-                    raise ValueError('')
-        else:
-            raise RuntimeError('unsupported format train-test split')
+            # train decoder on all the odd trials, and test on all the even trials
+            case ('odd', None, None):
+                train = trial.select_odd()
+                test = train.invert()
+
+            # train decoder on all the light session, and test on dark session
+            case ('light', None, None):
+                train_trial = self.dat.get_light_trange()
+                train = trial.select_range(train_trial)
+                test = train.invert()
+
+            # train decoder on the light-odd, and test on all the rest
+            case ('light-odd', None, None):
+                train_trial = self.dat.get_light_trange()
+                train = trial.select_odd_in_range(train_trial)
+                test = train.invert()  # TODO maybe to ``diffall()``?
+
+            # train decoder on the light-even, and test on all the rest
+            case ('light-even', None, None):
+                train_trial = self.dat.get_light_trange()
+                train = trial.select_even_in_range(train_trial)
+                test = train.invert()
+
+            # train decoder on the light session with k-fold (or repeated) validation
+            case ('light-cv', int(), int() | None):
+                train_trial = self.dat.get_light_trange()
+                return trial.kfold_cv_in_range(
+                    train_trial,
+                    self.cross_validation,
+                    not self.no_shuffle,
+                    self.n_repeats,
+                    self.seed
+                )
+
+            # train decoder on all the dark session, and test on light session
+            case ('dark', None, None):
+                train_trial = self.dat.get_dark_trange()
+                train = trial.select_range(train_trial)
+                test = train.invert()
+
+            # train decoder on the dark-odd, and test on all the rest
+            case ('dark-odd', None, None):
+                train_trial = self.dat.get_dark_trange()
+                train = trial.select_odd_in_range(train_trial)
+                test = train.invert()  # TODO maybe to ``diffall()``?
+
+            # train decoder on the dark-even, and test on all the rest
+            case ('dark-even', None, None):
+                train_trial = self.dat.get_dark_trange()
+                train = trial.select_even_in_range(train_trial)
+                test = train.invert()
+
+            # train decoder on the dark session with k-fold (or repeated) validation
+            case ('dark-cv', int(), int() | None):
+                train_trial = self.dat.get_dark_trange()
+                return trial.kfold_cv_in_range(
+                    train_trial,
+                    self.cross_validation,
+                    not self.no_shuffle,
+                    self.n_repeats,
+                    self.seed
+                )
+
+            # train decoder on all with k-fold (or repeated) validation
+            case (None, int(), int() | None):
+                return trial.kfold_cv(
+                    self.cross_validation,
+                    not self.no_shuffle,
+                    self.n_repeats,
+                    state=self.seed
+                )
+
+            # train decoder by selecting fraction of the trials, and test on the rest
+            case ('random-split', None, None):
+                train, test = trial.select_fraction(self.train_fraction)
+
+            # same train/test
+            case _:
+                fprint('unsupported format train-test split, then use the same train/test', vtype='warning')
+                return [(trial, trial)]
+
+        return [(train, test)]
 
     def run_decode(self, trial: TrialSelection, neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -337,7 +384,9 @@ class PositionDecodeOptions(AbstractParser):
         pr = self.load_bayes_posterior(fr, rate_map)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
-        self.plot_decode_foreach(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel)
+        if not self.ignore_foreach_plot:
+            self.plot_decode_foreach(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel)
+
         self.log_output_csv(test, time, predict_pos, actual_pos)
 
         return pr, predict_pos
@@ -390,7 +439,7 @@ class PositionDecodeOptions(AbstractParser):
             ax.sharex(_ax[0])
 
     def plot_decode_cv(self):
-        """Plot decode summary cross-validation results"""
+        """Plot decode summary cross-validation testset results"""
         df = pl.read_csv(self.csv_output)
         with plot_figure(None, figsize=(3, 8)) as ax:
             sns.boxplot(df, x='session', y='decode_err', ax=ax)
