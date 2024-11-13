@@ -6,11 +6,15 @@ from typing import Literal
 import numpy as np
 from neuralib.argp import AbstractParser, argument
 from neuralib.calimg.suite2p import normalize_signal
+from neuralib.io import csv_header
 from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure, ax_merge
 from neuralib.typing import PathLike
+from neuralib.util.verbose import fprint
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
+import seaborn as sns
+import polars as pl
 
 from ._io import PositionDecodeInput
 from ._plot import *
@@ -114,7 +118,7 @@ class PositionDecodeOptions(AbstractParser):
     # ============== #
 
     neuron_random: int | None = argument(
-        '--random',
+        '--random-neuron',
         metavar='NUMBER',
         type=int,
         default=None,
@@ -147,9 +151,13 @@ class PositionDecodeOptions(AbstractParser):
 
     # runtime set
     train_test_list: list[tuple[TrialSelection, TrialSelection]] | None
+    """List of train/test trial_selection"""
     dat: PositionDecodeInput | None
+    """``PositionDecodeInput``"""
     number_iter: int | None
+    """Number of iteration for running"""
     _current_train_test_index: int | None
+    """Train test index of the iteration"""
 
     def run(self):
         self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, trial_length=self.trial_length)
@@ -157,9 +165,16 @@ class PositionDecodeOptions(AbstractParser):
         self.train_test_list = self.train_test_split(trial)
         self.set_number_iter()
 
+        if self.csv_output.exists():
+            self.csv_output.unlink()
+            fprint(f'Auto delete existed csv due to the append mode: {self.csv_output}', vtype='io')
+
         for i in range(self.number_iter):
             self._current_train_test_index = i
+            fprint(f'Validate iteration: {i}')
             self.run_decode(trial, self.neuron_list)
+
+        self.plot_decode_cv()
 
     @cached_property
     def neuron_list(self) -> np.ndarray:
@@ -188,6 +203,11 @@ class PositionDecodeOptions(AbstractParser):
         return file.with_name(file.stem + '_bayes_posterior_cache').with_suffix('.npy')
 
     @property
+    def csv_output(self) -> Path:
+        file = self.dat.filepath
+        return file.with_name(file.stem + '_test_result').with_suffix('.csv')
+
+    @property
     def train_test(self) -> tuple[TrialSelection, TrialSelection]:
         sz = len(self.train_test_list)
         return self.train_test_list[self._current_train_test_index % sz]
@@ -204,7 +224,6 @@ class PositionDecodeOptions(AbstractParser):
     # noinspection PyTypeChecker
     def train_test_split(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
         """Train test split based on ``cross_validation`` instance"""
-
         if self.train_session is not None:
             match self.train_session:
                 case 'light':
@@ -318,17 +337,42 @@ class PositionDecodeOptions(AbstractParser):
         pr = self.load_bayes_posterior(fr, rate_map)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
-        self.plot_decode_result(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel)
+        self.plot_decode_foreach(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel)
+        self.log_output_csv(test, time, predict_pos, actual_pos)
 
         return pr, predict_pos
 
-    def plot_decode_result(self, time, pred_pos, actual_pos, fr_raw, light_off_time, ylabel):
+    def log_output_csv(self,
+                       test: TrialSelection,
+                       time: np.ndarray,
+                       pred_pos: np.ndarray,
+                       actual_pos: np.ndarray,
+                       agg_func: Literal['median', 'mean'] = 'median'):
+        headers = ['n_cv', 'session', 'n_trials', f'decode_err']
+
+        with csv_header(self.csv_output, headers, append=True) as csv:
+            mask = time < self.dat.light_off_time  # TODO if add tol 4 trials?
+            err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
+
+            func = getattr(np, agg_func)
+            for session in ('light', 'dark'):
+                if session == 'light':
+                    error = func(err[mask])
+                    n_trials = np.count_nonzero(test.selected_trials < self.dat.light_off_lap)
+                else:
+                    error = func(err[~mask])
+                    n_trials = np.count_nonzero(test.selected_trials >= self.dat.light_off_lap)
+
+                csv(self._current_train_test_index, session, n_trials, error)
+
+    def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_off_time, ylabel):
         """
+        Plot decode results foreach iteration
 
         :param time: `Array[float, T]`
         :param pred_pos: `Array[float, T]`
         :param actual_pos: `Array[float, T]`
-        :param fr_raw: Raw firing. `Array[float, [Traw, N]]`
+        :param fr_raw: Raw firing. `Array[float, [Traw, N | N']]`
         :param light_off_time: Time of light off in sec
         :param ylabel: ylabel for the firing activity
         """
@@ -344,6 +388,14 @@ class PositionDecodeOptions(AbstractParser):
             err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
             plot_decoding_err(ax, time, err, light_off_time)
             ax.sharex(_ax[0])
+
+    def plot_decode_cv(self):
+        """Plot decode summary cross-validation results"""
+        df = pl.read_csv(self.csv_output)
+        with plot_figure(None, figsize=(3, 8)) as ax:
+            sns.boxplot(df, x='session', y='decode_err', ax=ax)
+            sns.stripplot(df, x='session', y='decode_err', color='black', jitter=False, alpha=0.7, ax=ax)
+            ax.set(ylabel='decode_error(cm)')
 
     def load_bayes_posterior(self, fr: np.ndarray,
                              rate_map: np.ndarray,

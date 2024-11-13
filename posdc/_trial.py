@@ -154,13 +154,12 @@ class TrialSelection:
         time = self.dat.lap_time
         index = self.selected_trials
 
-        # time index? find a trial index which interval include t
-        trial_index = np.searchsorted(time, t) - 1  # (T,), ranging from 0 to L-1
+        trial_index = np.searchsorted(time, t) - 1
 
         # trial index in selected_trial
-        a = np.zeros_like(time, dtype=bool)  # (L+1,)
+        a = np.zeros_like(time, dtype=bool)
         a[index] = True
-        ret = a[trial_index]  # (T)
+        ret = a[trial_index]
 
         return ret
 
