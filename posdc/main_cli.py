@@ -215,6 +215,8 @@ class PositionDecodeOptions(AbstractParser):
         self.number_iter = self.get_number_iter()
         assert self.number_iter == len(self.train_test_list)
 
+        rate_map = self.get_ratemap()
+
         if self.csv_output.exists():
             self.csv_output.unlink()
             fprint(f'Auto delete existed csv due to the append mode: {self.csv_output}', vtype='io')
@@ -222,7 +224,7 @@ class PositionDecodeOptions(AbstractParser):
         for i in range(self.number_iter):
             self._current_train_test_index = i
             fprint(f'Validate iteration: {i}')
-            self.run_decode(trial, self.neuron_list)
+            self.run_decode(rate_map, trial, self.neuron_list)
 
         self.plot_decode_cv()
 
@@ -363,14 +365,22 @@ class PositionDecodeOptions(AbstractParser):
 
         return [(train, test)]
 
-    def run_decode(self, trial: TrialSelection, neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Run the decoding analysis
+    def get_ratemap(self) -> np.ndarray:
+        n_bins = int(self.trial_length / self.spatial_bin_size)
+        pos_ratemap = PositionRateMap(self.dat, n_bins=n_bins, sig_norm=True, force_compute=self.invalid_cache)
+        return pos_ratemap.load_binned_data(running_epoch=self.running_epoch, force_compute=self.invalid_cache)
 
+    def run_decode(self, rate_map: np.ndarray,
+                   trial: TrialSelection,
+                   neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Run the decoding analysis.
+
+        :param rate_map: `Array[float, [N, L, B]]`
         :param trial: ``TrialSelection``
         :param neuron_list: Neuronal bool mask. `Array[bool , N]`
         :return:
-        - pr: matrix of posterior probabilities. `Array[float, [T, X]]`.
+        - pr: matrix of posterior probabilities. `Array[float, [T, B]]`.
         - predict_pos: Predicted position. `Array[float, T]`
         """
 
@@ -380,11 +390,6 @@ class PositionDecodeOptions(AbstractParser):
         train, test = self.current_train_test
 
         # rate map
-        n_bins = int(self.trial_length / self.spatial_bin_size)
-        rate_map = (
-            PositionRateMap(dat, n_bins=n_bins, sig_norm=True, force_compute=self.invalid_cache)
-            .load_binned_data(running_epoch=self.running_epoch, force_compute=self.invalid_cache)
-        )
         rate_map = train.take_along_trial_axis(rate_map, 1)
         rate_map = np.nanmean(rate_map, axis=1)[neuron_list]
 
@@ -423,7 +428,7 @@ class PositionDecodeOptions(AbstractParser):
 
         # predict
         fr = fr.T  # (T, N)
-        rate_map = rate_map.T  # (X, N)
+        rate_map = rate_map.T  # (B, N)
         pr = self.load_bayes_posterior(fr, rate_map)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
@@ -530,13 +535,16 @@ class PositionDecodeOptions(AbstractParser):
                                position_down_sampling: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
 
-        :param position_time:
-        :param position:
-        :param velocity:
-        :param fr:
-        :param act_time:
+        :param position_time: Position time. `Array[float, P]`
+        :param position: Position value. `Array[float, P]`
+        :param velocity: Velocity value in cm/s. `Array[float, P]`
+        :param fr: Neural activity. `Array[float, [N, T]]`
+        :param act_time: Activity time. `Array[float, T]`
         :param position_down_sampling: If True, interpolate position to neural activity shape, otherwise, vice versa
-        :return:
+        :return: After running epoch masking and interpolation
+            - fr: Neural activity.`Array[float, [N, T']]`.
+            - time: Neural activity time. `Array[float, T]`.
+            - position: Animal's position. `Array[float, T]`.
         """
         from neuralib.locomotion import running_mask1d
 
