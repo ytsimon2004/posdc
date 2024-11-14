@@ -24,7 +24,7 @@ from ._trial import TrialSelection
 
 __all__ = ['PositionDecodeOptions']
 
-SESSION = Literal[
+TRAIN_OPTIONS = Literal[
     'odd', 'even',
     'light', 'light-odd', 'light-even',
     'dark', 'dark-odd', 'dark-even',
@@ -101,7 +101,7 @@ class PositionDecodeOptions(AbstractParser):
 
     GROUP_TRAIN_TEST = 'Train/Test Option'
 
-    train_session: SESSION = argument(
+    train_option: TRAIN_OPTIONS = argument(
         '--train',
         metavar='NAME',
         required=True,
@@ -114,7 +114,7 @@ class PositionDecodeOptions(AbstractParser):
         type=int,
         default=None,
         group=GROUP_TRAIN_TEST,
-        help='nfold for model cross validation (require for --train=light|dark-cv)',
+        help='N-fold for model cross validation',
     )
 
     no_shuffle: bool = argument(
@@ -128,8 +128,7 @@ class PositionDecodeOptions(AbstractParser):
         type=int,
         default=None,
         group=GROUP_TRAIN_TEST,
-        help='run as repeat kfold cv, make number of results to `n_cv * n_repeats`. '
-             '(optional for --train=light|dark-cv)'
+        help='run as repeated kfold cv, make number of results to `n_cv * n_repeats`'
     )
 
     train_fraction: float = argument(
@@ -180,7 +179,7 @@ class PositionDecodeOptions(AbstractParser):
     rastermap_bin_size: int = argument(
         '--rastermap-bin',
         metavar='VALUE',
-        default=20,
+        default=15,
         group=GROUP_RASTERMAP,
         help='bin size for number of total neurons',
     )
@@ -206,7 +205,10 @@ class PositionDecodeOptions(AbstractParser):
         help='output figures to a directory',
     )
 
-    # runtime set
+    # =========== #
+    # Runtime set #
+    # =========== #
+
     train_test_list: list[tuple[TrialSelection, TrialSelection]] | None
     """List of train/test trial_selection"""
 
@@ -218,6 +220,9 @@ class PositionDecodeOptions(AbstractParser):
 
     _current_train_test_index: int | None
     """Train test index of the iteration"""
+
+    __rastermap_sn: np.ndarray | None = None
+    """Rastermap super neuron cache"""
 
     def run(self):
         # set attrs
@@ -290,7 +295,7 @@ class PositionDecodeOptions(AbstractParser):
                 return 1
 
     def train_test_split(self, trial: TrialSelection) -> list[tuple[TrialSelection, TrialSelection]]:
-        match self.train_session, self.cross_validation, self.n_repeats:
+        match self.train_option, self.cross_validation, self.n_repeats:
 
             # train decoder on all the even trials and test on all the odd trials
             case ('even', _, _):
@@ -386,6 +391,14 @@ class PositionDecodeOptions(AbstractParser):
         pos_ratemap = PositionRateMap(self.dat, n_bins=n_bins, sig_norm=True, force_compute=self.invalid_cache)
         return pos_ratemap.load_binned_data(running_epoch=self.running_epoch, force_compute=self.invalid_cache)
 
+    def get_rastermap_sn(self, fr_raw: np.ndarray) -> np.ndarray:
+        if self.__rastermap_sn is None:
+            from posdc._rastermap import run_rastermap
+            ret = run_rastermap(fr_raw, self.rastermap_bin_size).super_neurons
+            self.__rastermap_sn = ret
+
+        return self.__rastermap_sn
+
     def run_decode(self, rate_map: np.ndarray,
                    trial: TrialSelection,
                    neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -419,7 +432,7 @@ class PositionDecodeOptions(AbstractParser):
 
         if self.rastermap_sort:
             from ._rastermap import run_rastermap
-            fr_raw = run_rastermap(fr_raw, self.rastermap_bin_size).super_neurons
+            fr_raw = self.get_rastermap_sn(fr_raw)
             ylabel = '#super_neurons'
         else:
             sort_idx = self._sort_position(rate_map)

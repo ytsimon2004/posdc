@@ -20,7 +20,8 @@ classifiers = [
 dependencies = [
     "neura-library",
     "typing-extensions",
-    "rastermap"
+    "rastermap",
+    "tables"
 ]
 
 [build-system]
