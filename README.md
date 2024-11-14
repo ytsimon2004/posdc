@@ -135,12 +135,13 @@ Output
 -------------------------------
 
 
-TODO Bugfix
+TODO/BUGFIX
 ------------
 
 - [ ] `RuntimeError: pr approach the infinite`, usually happened in `--deconv`, try to specify less neuron 
 using `--random-neuron`
 - [ ] Test for the `--seed` usage
+- [ ] Statistic for cv summary if needed
 
 
 Annotations

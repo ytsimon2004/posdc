@@ -8,14 +8,17 @@ __all__ = ['TrialSelection']
 
 class TrialSelection:
     """Trial selection class for cross validation"""
+    __slots__ = ('dat', '_selected_trials', 'select_mode')
 
     def __init__(self, dat: PositionDecodeInput,
                  selected_trial: np.ndarray | None = None,
-                 select_mode: str | None = None):
+                 select_mode: str | None = None,
+                 inherited_mode: tuple[str, ...] = ()):
         """
         :param dat: ``PositionDecodeInput``
-        :param selected_trial:  `Array[int, L]`
-        :param select_mode:
+        :param selected_trial: Selected trial indices, or None to select all trials. `Array[int, L]`
+        :param select_mode: A string describing the selection mode
+        :param inherited_mode: A tuple of inherited selection modes.
         """
 
         self.dat = dat
@@ -25,13 +28,17 @@ class TrialSelection:
         else:
             self._selected_trials = np.arange(self.dat.n_trials)
 
-        if not hasattr(self, 'select_mode'):
-            self.select_mode = ()
-        else:
-            self.select_mode += (select_mode,)
+        self.select_mode = inherited_mode + ((select_mode,) if select_mode else ())
 
-    def __repr__(self):
-        return f'SELECT: {self.selected_trials}'
+    def _new_instance(self, selected_trial: np.ndarray, select_mode: str) -> Self:
+        """
+        Create a new instance of TrialSelection with inherited select_mode.
+
+        :param selected_trial: The trials to select.
+        :param select_mode: The new selection mode to append.
+        :return: A new TrialSelection instance.
+        """
+        return TrialSelection(self.dat, selected_trial, select_mode, self.select_mode)
 
     @property
     def selected_trials(self) -> np.ndarray:
@@ -44,68 +51,73 @@ class TrialSelection:
 
     @property
     def trial_time(self) -> np.ndarray:
-        """trial start? time"""  # TODO
+        """trial start time"""
         return self.dat.lap_time[self.selected_trials]
 
     @property
     def session_range(self) -> tuple[int, int]:
+        """Get session range (start, end)"""
         r = self.dat.trial_index
         return int(r[0]), int(r[-1])
 
-    def invert(self) -> Self:
+    def diff_all(self) -> Self:
+        """Instance diff to all trials"""
         whole = np.arange(*self.session_range)
         ret = np.setdiff1d(whole, self.selected_trials)
-        return TrialSelection(self.dat, ret, 'invert')
+        return self._new_instance(ret, 'diff_all')
 
     def select_odd(self) -> Self:
-        return TrialSelection(self.dat, self._selected_trials[self._selected_trials % 2 == 1], 'select_odd')
+        """Select odd trials"""
+        return self._new_instance(self._selected_trials[self._selected_trials % 2 == 1], 'select_odd')
 
     def select_even(self) -> Self:
-        return TrialSelection(self.dat, self._selected_trials[self._selected_trials % 2 == 0], 'select_even')
+        """Select even trials"""
+        return self._new_instance(self._selected_trials[self._selected_trials % 2 == 0], 'select_even')
 
     def select_range(self, trial_range: tuple[int, int]) -> Self:
         """
+        Select trial range
 
         :param trial_range: (start, end). inclusive
-        :return:
         """
         mask = (trial_range[0] <= self._selected_trials) & (self._selected_trials <= trial_range[1])
-        return TrialSelection(self.dat, self._selected_trials[mask], 'select_range')
+        return self._new_instance(self._selected_trials[mask], 'select_range')
 
     def select_odd_in_range(self, trial_range: tuple[int, int]) -> Self:
         """
+        Select odd trials in range
 
         :param trial_range: (start, end). inclusive
-        :return:
         """
         selected_trials = self._selected_trials
         mask = (trial_range[0] <= selected_trials) & (self._selected_trials <= trial_range[1]) & (
                 self._selected_trials % 2 == 1)
-        return TrialSelection(self.dat, self._selected_trials[mask], 'select_odd_in_range')
+        return self._new_instance(self._selected_trials[mask], 'select_odd_in_range')
 
     def select_even_in_range(self, trial_range: tuple[int, int]) -> Self:
         """
+        Select even trials in range
 
         :param trial_range: (start, end). inclusive
         :return:
         """
         selected_trials = self._selected_trials
         mask = (trial_range[0] <= selected_trials) & (selected_trials <= trial_range[1]) & (selected_trials % 2 == 0)
-        return TrialSelection(self.dat, selected_trials[mask], 'select_even_in_range')
+        return self._new_instance(selected_trials[mask], 'select_even_in_range')
 
-    def kfold_cv(self,
-                 fold: int = 5,
+    def kfold_cv(self, fold: int = 5,
                  shuffle: bool = True,
                  n_repeats: int | None = 10,
                  state: int | None = None,
-                 test_across_session: bool = False) -> list[tuple[Self, Self]]:
+                 test_from_all: bool = False) -> list[tuple[Self, Self]]:
         """
+        K-Fold cross-validation from ``selected_trials``
 
         :param fold: Number of folds
         :param shuffle: Whether to shuffle the data before splitting into batches
-        :param n_repeats:
-        :param state:
-        :param test_across_session
+        :param n_repeats: Number of repeats of K-fold
+        :param state: Random state for K-Fold
+        :param test_from_all: If True, test from all trials, otherwise, test from purely the ``test_index`` from split
         :return:
         """
         from sklearn.model_selection import KFold, RepeatedKFold
@@ -117,13 +129,13 @@ class TrialSelection:
 
         ret = []
         for train_index, test_index in kfold_iter.split(self.selected_trials):
-            train = TrialSelection(self.dat, self._selected_trials[train_index], 'kfold_cv-train')
+            train = self._new_instance(self._selected_trials[train_index], 'kfold_cv-train')
 
-            if test_across_session:
+            if test_from_all:
                 t = np.setdiff1d(self.dat.trial_index, self._selected_trials[train_index])
-                test = TrialSelection(self.dat, t, 'kfold_cv-test-all')
+                test = self._new_instance(t, 'kfold_cv-test-all')
             else:
-                test = TrialSelection(self.dat, self._selected_trials[test_index], 'kfold_cv-test')
+                test = self._new_instance(self._selected_trials[test_index], 'kfold_cv-test')
 
             ret.append((train, test))
 
@@ -158,22 +170,27 @@ class TrialSelection:
 
         return ret
 
-    def select_fraction(self, train_fraction: float) -> tuple[Self, Self]:
+    def select_fraction(self, train_fraction: float, seed: int | None = None) -> tuple[Self, Self]:
         """
         Select fraction of the trials for training and testing.
 
         testing data always continuous in selected trials.
 
         :param train_fraction: value between [0, 1]
+        :param seed: Random seed
         :return: tuple of (train, test)
         """
         total = self.n_selected_trials
         n_test = int(total * (1 - train_fraction))
+
+        if seed is not None:
+            np.random.seed(seed)
         start = np.random.randint(total - n_test)
+
         test_index = np.arange(start, start + n_test)
         train_index = np.setdiff1d(np.arange(total), test_index)
 
-        test = TrialSelection(self.dat, self._selected_trials[test_index], 'select_fraction-test')
-        train = TrialSelection(self.dat, self._selected_trials[train_index], 'select_fraction-train')
+        test = self._new_instance(self._selected_trials[test_index], 'select_fraction-test')
+        train = self._new_instance(self._selected_trials[train_index], 'select_fraction-train')
 
         return train, test

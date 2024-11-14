@@ -5,17 +5,17 @@ from typing import Literal
 
 import numpy as np
 import polars as pl
-import seaborn as sns
 from neuralib.argp import AbstractParser, argument
 from neuralib.calimg.suite2p import normalize_signal
 from neuralib.io import csv_header
 from neuralib.model.bayes_decoding import place_bayes
-from neuralib.plot import plot_figure
+from neuralib.plot import plot_figure, violin_boxplot
 from neuralib.typing import PathLike
 from neuralib.util.utils import ensure_dir
 from neuralib.util.verbose import fprint
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
+from tqdm import trange
 
 from ._io import PositionDecodeInput
 from ._plot import *
@@ -155,7 +155,7 @@ class PositionDecodeOptions(AbstractParser):
         help='number of random neurons'
     )
 
-    seed: int | None = argument(  # TODO this may not work properly. need review all random function calls.
+    seed: int | None = argument(
         '--seed',
         type=int,
         metavar='VALUE',
@@ -229,6 +229,7 @@ class PositionDecodeOptions(AbstractParser):
         self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, trial_length=self.trial_length)
         trial = TrialSelection(self.dat)
         self.train_test_list = self.train_test_split(trial)
+
         self.number_iter = self.get_number_iter()
         assert self.number_iter == len(self.train_test_list)
         rate_map = self.get_ratemap()
@@ -242,9 +243,8 @@ class PositionDecodeOptions(AbstractParser):
             ensure_dir(self.output_dir)
 
         # main
-        for i in range(self.number_iter):
+        for i in trange(self.number_iter, ncols=80, unit='cv', desc='number of cross validate'):
             self._current_train_test_index = i
-            fprint(f'Validate iteration: {i}')
             self.run_decode(rate_map, trial, self.neuron_list)
 
         self.plot_decode_cv()
@@ -300,30 +300,30 @@ class PositionDecodeOptions(AbstractParser):
             # train decoder on all the even trials and test on all the odd trials
             case ('even', _, _):
                 train = trial.select_even()
-                test = train.invert()
+                test = train.diff_all()
 
             # train decoder on all the odd trials, and test on all the even trials
             case ('odd', _, _):
                 train = trial.select_odd()
-                test = train.invert()
+                test = train.diff_all()
 
             # train decoder on all the light session, and test on dark session
             case ('light', _, _):
                 train_trial = self.dat.get_light_trange()
                 train = trial.select_range(train_trial)
-                test = train.invert()
+                test = train.diff_all()
 
             # train decoder on the light-odd, and test on all the rest
             case ('light-odd', _, _):
                 train_trial = self.dat.get_light_trange()
                 train = trial.select_odd_in_range(train_trial)
-                test = train.invert()  # TODO maybe to ``diffall()``?
+                test = train.diff_all()
 
             # train decoder on the light-even, and test on all the rest
             case ('light-even', _, _):
                 train_trial = self.dat.get_light_trange()
                 train = trial.select_even_in_range(train_trial)
-                test = train.invert()
+                test = train.diff_all()
 
             # train decoder on the light session with k-fold (or repeated) validation
             case ('light-cv', int(), int() | None):
@@ -333,26 +333,26 @@ class PositionDecodeOptions(AbstractParser):
                     not self.no_shuffle,
                     self.n_repeats,
                     self.seed,
-                    test_across_session=True
+                    test_from_all=True
                 )
 
             # train decoder on all the dark session, and test on light session
             case ('dark', _, _):
                 train_trial = self.dat.get_dark_trange()
                 train = trial.select_range(train_trial)
-                test = train.invert()
+                test = train.diff_all()
 
             # train decoder on the dark-odd, and test on all the rest
             case ('dark-odd', _, _):
                 train_trial = self.dat.get_dark_trange()
                 train = trial.select_odd_in_range(train_trial)
-                test = train.invert()  # TODO maybe to ``diffall()``?
+                test = train.diff_all()
 
             # train decoder on the dark-even, and test on all the rest
             case ('dark-even', _, _):
                 train_trial = self.dat.get_dark_trange()
                 train = trial.select_even_in_range(train_trial)
-                test = train.invert()
+                test = train.diff_all()
 
             # train decoder on the dark session with k-fold (or repeated) validation
             case ('dark-cv', int(), int() | None):
@@ -362,7 +362,7 @@ class PositionDecodeOptions(AbstractParser):
                     not self.no_shuffle,
                     self.n_repeats,
                     self.seed,
-                    test_across_session=True
+                    test_from_all=True
                 )
 
             # train decoder on all with k-fold (or repeated) validation
@@ -372,12 +372,12 @@ class PositionDecodeOptions(AbstractParser):
                     not self.no_shuffle,
                     self.n_repeats,
                     state=self.seed,
-                    test_across_session=False
+                    test_from_all=False
                 )
 
             # train decoder by selecting fraction of the trials, and test on the rest
             case ('random-split', _, _):
-                train, test = trial.select_fraction(self.train_fraction)
+                train, test = trial.select_fraction(self.train_fraction, seed=self.seed)
 
             # same train/test
             case _:
@@ -392,6 +392,7 @@ class PositionDecodeOptions(AbstractParser):
         return pos_ratemap.load_binned_data(running_epoch=self.running_epoch, force_compute=self.invalid_cache)
 
     def get_rastermap_sn(self, fr_raw: np.ndarray) -> np.ndarray:
+        """Get rastermap superneurons and cache instance"""
         if self.__rastermap_sn is None:
             from posdc._rastermap import run_rastermap
             ret = run_rastermap(fr_raw, self.rastermap_bin_size).super_neurons
@@ -478,12 +479,13 @@ class PositionDecodeOptions(AbstractParser):
                        actual_pos: np.ndarray,
                        agg_func: Literal['median', 'mean'] = 'median'):
         """
+        Log cv foreach results to csv
 
-        :param test:
-        :param time:
-        :param pred_pos:
-        :param actual_pos:
-        :param agg_func:
+        :param test: ``TrialSelection``
+        :param time: Time for test dataset. `Array[float, T]`
+        :param pred_pos: Predicted position. `Array[float, T]`
+        :param actual_pos: Actual position. `Array[float, T]`
+        :param agg_func: numpy attribute used for aggregate. by default use ``np.median()``
         :return:
         """
         headers = ['n_cv', 'session', 'n_trials', f'decode_err']
@@ -507,14 +509,15 @@ class PositionDecodeOptions(AbstractParser):
         """
         Plot decode results foreach iteration
 
-        :param time: `Array[float, T]`
-        :param pred_pos: `Array[float, T]`
-        :param actual_pos: `Array[float, T]`
+        :param time: Time for test dataset. `Array[float, T]`
+        :param pred_pos: Predicted position. `Array[float, T]`
+        :param actual_pos: Actual position. `Array[float, T]`
         :param fr_raw: Raw firing. `Array[float, [Traw, N | N']]`
         :param light_off_time: Time of light off in sec
         :param ylabel: ylabel for the firing activity
         """
-        output = self.output_dir / f'decode_foreach_cv{self._current_train_test_index}.pdf' if self.output_dir else None
+        filename = self.dat.filepath.stem + f'_decode_foreach_cv{self._current_train_test_index}.pdf'
+        output = self.output_dir / filename if self.output_dir else None
         with plot_figure(output, 3, 1, figsize=(15, 8), height_ratios=(1, 2, 1), sharex=True) as ax:
             plot_decode_actual_position(ax[0], time, pred_pos, actual_pos)
 
@@ -530,10 +533,10 @@ class PositionDecodeOptions(AbstractParser):
         """Plot decode summary cross-validation testset results"""
         df = self.load_devode_cv()
         print(f'cv dataframe: {df}')
-        output = self.output_dir / 'decode_summary.pdf' if self.output_dir else None
+        filename = self.dat.filepath.stem + '_decode_summary.pdf'
+        output = self.output_dir / filename if self.output_dir else None
         with plot_figure(output, figsize=(3, 8)) as ax:
-            sns.boxplot(df, x='session', y='decode_err', ax=ax)
-            sns.stripplot(df, x='session', y='decode_err', color='black', jitter=False, alpha=0.7, ax=ax)
+            violin_boxplot(ax, df, x='session', y='decode_err')
             ax.set(ylabel='decode_error(cm)')
 
     def load_bayes_posterior(self, fr: np.ndarray,
