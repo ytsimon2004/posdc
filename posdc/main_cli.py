@@ -12,6 +12,7 @@ from neuralib.io import csv_header
 from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure
 from neuralib.typing import PathLike
+from neuralib.util.utils import ensure_dir
 from neuralib.util.verbose import fprint
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
@@ -49,7 +50,7 @@ class PositionDecodeOptions(AbstractParser):
     # Decoder Parameter #
     # ================= #
 
-    GROUP_DECODING = 'Decoding'
+    GROUP_DECODING = 'Decoding Option'
 
     trial_length: int = argument(
         '--length',
@@ -82,8 +83,15 @@ class PositionDecodeOptions(AbstractParser):
         help='whether select only the running epoch',
     )
 
+    no_position_down_sampling: bool = argument(
+        '--no-position-ds',
+        group=GROUP_DECODING,
+        help='not interpolate position to neural activity shape, then interpolate neural activity to position',
+    )
+
     invalid_cache: bool = argument(
         '--invalid-cache',
+        group=GROUP_DECODING,
         help='invalid all the cache, and recompute'
     )
 
@@ -91,13 +99,13 @@ class PositionDecodeOptions(AbstractParser):
     # Train-Test Split #
     # ================ #
 
-    GROUP_TRAINING_SET = 'Training Set'
+    GROUP_TRAIN_TEST = 'Train/Test Option'
 
     train_session: SESSION = argument(
         '--train',
         metavar='NAME',
         required=True,
-        group=GROUP_TRAINING_SET,
+        group=GROUP_TRAIN_TEST,
         help='train the decoder in which behavioral session'
     )
 
@@ -105,13 +113,13 @@ class PositionDecodeOptions(AbstractParser):
         '--cv',
         type=int,
         default=None,
-        group=GROUP_TRAINING_SET,
+        group=GROUP_TRAIN_TEST,
         help='nfold for model cross validation (require for --train=light|dark-cv)',
     )
 
     no_shuffle: bool = argument(
         '--no-shuffle',
-        group=GROUP_TRAINING_SET,
+        group=GROUP_TRAIN_TEST,
         help='whether without shuffle the data for non-repeated cv',
     )
 
@@ -119,7 +127,7 @@ class PositionDecodeOptions(AbstractParser):
         '--repeats',
         type=int,
         default=None,
-        group=GROUP_TRAINING_SET,
+        group=GROUP_TRAIN_TEST,
         help='run as repeat kfold cv, make number of results to `n_cv * n_repeats`. '
              '(optional for --train=light|dark-cv)'
     )
@@ -128,23 +136,23 @@ class PositionDecodeOptions(AbstractParser):
         '--train-fraction',
         type=float,
         default=0.8,
-        group=GROUP_TRAINING_SET,
+        group=GROUP_TRAIN_TEST,
         help='fraction of data for train set if `random_split` in cv, the rest will be utilized in test set.'
              '(require for --train=random-split)'
     )
 
-    # ============== #
-    # Random neurons #
-    # ============== #
+    # ============= #
+    # Randomization #
+    # ============= #
 
-    GROUP_SHUFFLING = 'Shuffling'
+    GROUP_RANDOM = 'Random Option'
 
     neuron_random: int | None = argument(
         '--random-neuron',
         metavar='NUMBER',
         type=int,
         default=None,
-        group=GROUP_SHUFFLING,
+        group=GROUP_RANDOM,
         help='number of random neurons'
     )
 
@@ -153,7 +161,7 @@ class PositionDecodeOptions(AbstractParser):
         type=int,
         metavar='VALUE',
         default=None,
-        group=GROUP_SHUFFLING,
+        group=GROUP_RANDOM,
         help='seed for random number generator'
     )
 
@@ -161,11 +169,11 @@ class PositionDecodeOptions(AbstractParser):
     # RasterMap Options #
     # ================= #
 
-    GROUP_RASTER = 'Rastermap Plotting Options'
+    GROUP_RASTERMAP = 'Rastermap sorting Options'
 
     rastermap_sort: bool = argument(
         '--rastermap',
-        group=GROUP_RASTER,
+        group=GROUP_RASTERMAP,
         help='sort activity heatmap using rastermap'
     )
 
@@ -173,7 +181,7 @@ class PositionDecodeOptions(AbstractParser):
         '--rastermap-bin',
         metavar='VALUE',
         default=20,
-        group=GROUP_RASTER,
+        group=GROUP_RASTERMAP,
         help='bin size for number of total neurons',
     )
 
@@ -189,9 +197,12 @@ class PositionDecodeOptions(AbstractParser):
         help='whether to ignore foreach cv plot, and only plot the summary result',
     )
 
-    output_dir: Path = argument(
-        '-o', '--output',
+    output_dir: Path | None = argument(
+        '-O', '--output',
+        metavar='PATH',
+        type=Path,
         group=GROUP_PLOTTING,
+        default=None,
         help='output figures to a directory',
     )
 
@@ -209,18 +220,23 @@ class PositionDecodeOptions(AbstractParser):
     """Train test index of the iteration"""
 
     def run(self):
+        # set attrs
         self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, trial_length=self.trial_length)
         trial = TrialSelection(self.dat)
         self.train_test_list = self.train_test_split(trial)
         self.number_iter = self.get_number_iter()
         assert self.number_iter == len(self.train_test_list)
-
         rate_map = self.get_ratemap()
 
+        # io
         if self.csv_output.exists():
             self.csv_output.unlink()
             fprint(f'Auto delete existed csv due to the append mode: {self.csv_output}', vtype='io')
 
+        if self.output_dir is not None:
+            ensure_dir(self.output_dir)
+
+        # main
         for i in range(self.number_iter):
             self._current_train_test_index = i
             fprint(f'Validate iteration: {i}')
@@ -413,12 +429,15 @@ class PositionDecodeOptions(AbstractParser):
         # position
         pos = dat.load_interp_position()
         if self.running_epoch:
-            fr, time, position = self._running_epoch_masking(pos.t, pos.p, pos.v, fr, dat.act_time)
+            fr, time, position = self._running_epoch_masking(
+                pos.t, pos.p, pos.v, fr, dat.act_time,
+                position_down_sampling=not self.no_position_down_sampling
+            )
         else:
-            time = dat.act_time
-            position = pos.p
-            # TODO interp
-            raise NotImplementedError('')
+            fr, time, position = self._all_epoch_masking(
+                pos.t, pos.p, fr, dat.act_time,
+                position_down_sampling=not self.no_position_down_sampling
+            )
 
         # actual (test set)
         t_mask = test.masking_time(time)
@@ -445,6 +464,15 @@ class PositionDecodeOptions(AbstractParser):
                        pred_pos: np.ndarray,
                        actual_pos: np.ndarray,
                        agg_func: Literal['median', 'mean'] = 'median'):
+        """
+
+        :param test:
+        :param time:
+        :param pred_pos:
+        :param actual_pos:
+        :param agg_func:
+        :return:
+        """
         headers = ['n_cv', 'session', 'n_trials', f'decode_err']
 
         with csv_header(self.csv_output, headers, append=True) as csv:
@@ -473,8 +501,8 @@ class PositionDecodeOptions(AbstractParser):
         :param light_off_time: Time of light off in sec
         :param ylabel: ylabel for the firing activity
         """
-        # TODO take self.output_dir and generate figure filenames
-        with plot_figure(None, 3, 1, figsize=(15, 8), height_ratios=(1, 2, 1), sharex=True) as ax:
+        output = self.output_dir / f'decode_foreach_cv{self._current_train_test_index}.pdf' if self.output_dir else None
+        with plot_figure(output, 3, 1, figsize=(15, 8), height_ratios=(1, 2, 1), sharex=True) as ax:
             plot_decode_actual_position(ax[0], time, pred_pos, actual_pos)
 
             plot_firing_rate(ax[1], self.dat.act_time, fr_raw, ylabel=ylabel)
@@ -489,7 +517,8 @@ class PositionDecodeOptions(AbstractParser):
         """Plot decode summary cross-validation testset results"""
         df = self.load_devode_cv()
         print(f'cv dataframe: {df}')
-        with plot_figure(None, figsize=(3, 8)) as ax:
+        output = self.output_dir / 'decode_summary.pdf' if self.output_dir else None
+        with plot_figure(output, figsize=(3, 8)) as ax:
             sns.boxplot(df, x='session', y='decode_err', ax=ax)
             sns.stripplot(df, x='session', y='decode_err', color='black', jitter=False, alpha=0.7, ax=ax)
             ax.set(ylabel='decode_error(cm)')
@@ -534,6 +563,7 @@ class PositionDecodeOptions(AbstractParser):
                                act_time: np.ndarray,
                                position_down_sampling: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
+        Running epoch masking and interpolation for the decoding parameters
 
         :param position_time: Position time. `Array[float, P]`
         :param position: Position value. `Array[float, P]`
@@ -543,8 +573,8 @@ class PositionDecodeOptions(AbstractParser):
         :param position_down_sampling: If True, interpolate position to neural activity shape, otherwise, vice versa
         :return: After running epoch masking and interpolation
             - fr: Neural activity.`Array[float, [N, T']]`.
-            - time: Neural activity time. `Array[float, T]`.
-            - position: Animal's position. `Array[float, T]`.
+            - time: Neural activity time. `Array[float, T']`.
+            - position: Animal's position. `Array[float, T']`.
         """
         from neuralib.locomotion import running_mask1d
 
@@ -562,6 +592,35 @@ class PositionDecodeOptions(AbstractParser):
             time = position_time[x]
             fr = interp1d(act_time, fr, axis=fr.ndim - 1, bounds_error=False, fill_value=0)(time)
             position = position[x]
+
+        return fr, time, position
+
+    @staticmethod
+    def _all_epoch_masking(position_time: np.ndarray,
+                           position: np.ndarray,
+                           fr: np.ndarray,
+                           act_time: np.ndarray,
+                           position_down_sampling: bool = True):
+        """
+        Interpolation for decoding parameters
+
+        :param position_time: Position time. `Array[float, P]`
+        :param position: Position value. `Array[float, P]`
+        :param fr: Neural activity. `Array[float, [N, T]]`
+        :param act_time: Activity time. `Array[float, T]`
+        :param position_down_sampling: If True, interpolate position to neural activity shape, otherwise, vice versa
+        :return: After interpolation
+            - fr: Neural activity.`Array[float, [N, T']]`.
+            - time: Neural activity time. `Array[float, T']`.
+            - position: Animal's position. `Array[float, T']`.
+        """
+
+        if position_down_sampling:
+            position = interp1d(position_time, position, bounds_error=False, fill_value='extrapolate')(act_time)
+            time = act_time
+        else:
+            fr = interp1d(position_time, position, bounds_error=False, fill_value=0)(position_time)
+            time = position_time
 
         return fr, time, position
 
