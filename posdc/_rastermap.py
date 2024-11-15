@@ -37,13 +37,15 @@ def run_rastermap(activity: np.ndarray,
                   **kwargs) -> RastermapResult:
     """
 
-    :param activity:
-    :param bin_size:
-    :param n_clusters:
-    :param n_pcs:
-    :param locality:
-    :param time_lag_window:
-    :param grid_upsample:
+    :param activity: Neural activity. `Array[float, [N, T]]`
+    :param bin_size: Bin size for number of total neurons
+    :param n_clusters: Number of clusters created from data before upsampling and creating embedding
+    :param n_pcs: Number of PCs to use during optimization
+    :param locality: How local should the algorithm be -- set to 1.0 for highly local + sequence finding,
+        and 0.0 for global sorting
+    :param time_lag_window: Number of time points into the future to compute cross-correlation,
+        useful to set to several timepoints for sequence finding
+    :param grid_upsample: How much to upsample clusters, if set to 0.0 then no upsampling
     :param kwargs: Additional keyword arguments pass to ``Rastermap()``
     :return: ``RastermapResult``
     """

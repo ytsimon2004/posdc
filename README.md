@@ -93,12 +93,12 @@ posdoc --file [HDF_FILE] --run --train light-cv --cv 5 --random-neuron 500 --rep
 ```
 
 #### Remarks
+
 - `--invalid-cache`: To invalid local cache when changing **Decoding Option**
 - `--rastermap`: show sorted heatmap by [rastermap](https://github.com/MouseLand/rastermap)
 - `--ignore-foreach`: ignore foreach cv plots, and only plot summary
 - `--output`: specify output dir for saving the figures
 - See other `TRAIN_OPTIONS` if needed: check `PositionDecodeOptions.train_test_split()`
-
 
 ------------------------------
 
@@ -130,7 +130,7 @@ Output Files
 - `n_cv`: Number of the cross validation
 - `session`: Which session of the test dataset
 - `n_trials`: Number of trials of the test dataset
-- `decode error`: Mean/median decode error for the session
+- `decode_error`: Mean/median decode error for the session
 
 ### Cache
 
@@ -143,11 +143,10 @@ Output Files
 TODO/BUGFIX
 ------------
 
-- [ ] `RuntimeError: pr approach the infinite`, usually happened in `--deconv`, try to specify less neuron 
-using `--random-neuron`
+- [ ] If get an`RuntimeError: pr approach the infinite`, usually happened in `--deconv`, try to specify less neuron
+  using `--random-neuron`
 - [ ] Test for the `--seed` usage
 - [ ] Statistic for cv summary if needed
-
 
 Annotations
 -----------

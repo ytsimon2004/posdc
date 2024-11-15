@@ -18,8 +18,8 @@ class PositionRateMap:
                  force_compute: bool = False):
         """
 
-        :param dat:
-        :param n_bins:
+        :param dat: ``PositionDecodeInput``
+        :param n_bins: Number of bins for each lap(trial)
         :param sig_norm: Do 0 1 normalization
         :param force_compute: Force compute local position cache
         """

@@ -532,7 +532,7 @@ class PositionDecodeOptions(AbstractParser):
         output = self.output_dir / filename if self.output_dir else None
         with plot_figure(output, figsize=(3, 8)) as ax:
             violin_boxplot(ax, df, x='session', y='decode_err')
-            ax.set(ylabel='decode_error(cm)')
+            ax.set(ylabel='decode_error(cm)', ylim=(0, 40))
 
     @staticmethod
     def _wrap_diff(x: np.ndarray,
