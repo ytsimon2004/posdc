@@ -271,11 +271,6 @@ class PositionDecodeOptions(AbstractParser):
         return np.nonzero(ret)[0]
 
     @property
-    def bayes_posterior_cache(self) -> Path:
-        file = self.dat.filepath
-        return file.with_name(file.stem + '_bayes_posterior_cache').with_suffix('.npy')
-
-    @property
     def csv_output(self) -> Path:
         file = self.dat.filepath
         return file.with_name(file.stem + '_test_result').with_suffix('.csv')
@@ -462,7 +457,7 @@ class PositionDecodeOptions(AbstractParser):
         # predict
         fr = fr.T  # (T, N)
         rate_map = rate_map.T  # (B, N)
-        pr = self.load_bayes_posterior(fr, rate_map)
+        pr = place_bayes(fr, rate_map, self.spatial_bin_size)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
         if not self.ignore_foreach_plot:
@@ -538,16 +533,6 @@ class PositionDecodeOptions(AbstractParser):
         with plot_figure(output, figsize=(3, 8)) as ax:
             violin_boxplot(ax, df, x='session', y='decode_err')
             ax.set(ylabel='decode_error(cm)')
-
-    def load_bayes_posterior(self, fr: np.ndarray,
-                             rate_map: np.ndarray,
-                             force_compute: bool = True) -> np.ndarray:
-        if not self.bayes_posterior_cache.exists() or force_compute:
-            pr = place_bayes(fr, rate_map, self.spatial_bin_size)
-            np.save(self.bayes_posterior_cache, pr)
-        else:
-            pr = np.load(self.bayes_posterior_cache)
-        return pr
 
     @staticmethod
     def _wrap_diff(x: np.ndarray,

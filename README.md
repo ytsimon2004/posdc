@@ -102,10 +102,10 @@ posdoc --file [HDF_FILE] --run --train light-cv --cv 5 --random-neuron 500 --rep
 
 ------------------------------
 
-Output
+Output Files
 ------------------
 
-### figures
+### Figures
 
 - `decode_foreach_cv*.pdf`: Foreach cross validation results
 - `decode_summary.pdf`: Summary of cross validation in light versus dark
@@ -131,6 +131,11 @@ Output
 - `session`: Which session of the test dataset
 - `n_trials`: Number of trials of the test dataset
 - `decode error`: Mean/median decode error for the session
+
+### Cache
+
+- `[FILE]_position_cache.npz`: Position information
+- `[FILE]_ratemap_cache.npy`: RateMap (position binned activity)
 
 -------------------------------
 
