@@ -5,11 +5,12 @@ from typing import Literal
 
 import numpy as np
 import polars as pl
+import scipy
 from neuralib.argp import AbstractParser, argument
 from neuralib.calimg.suite2p import normalize_signal
 from neuralib.io import csv_header
 from neuralib.model.bayes_decoding import place_bayes
-from neuralib.plot import plot_figure, violin_boxplot
+from neuralib.plot import plot_figure, violin_boxplot, ax_merge
 from neuralib.typing import PathLike
 from neuralib.util.utils import ensure_dir
 from neuralib.util.verbose import fprint
@@ -17,9 +18,10 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 from tqdm import trange
 
+from posdc._plot import plot_binned_decoding_error
 from ._io import PositionDecodeInput
 from ._plot import *
-from ._ratemap import PositionRateMap
+from ._ratemap import PositionRateMap, PositionBinnedSig
 from ._trial import TrialSelection
 
 __all__ = ['PositionDecodeOptions']
@@ -221,6 +223,12 @@ class PositionDecodeOptions(AbstractParser):
     _current_train_test_index: int | None
     """Train test index of the iteration"""
 
+    _current_train_trials: np.ndarray | None
+    """Train trials of the iteration"""
+
+    _current_test_trials: np.ndarray | None
+    """Test trials of the iteration"""
+
     __rastermap_sn: np.ndarray | None = None
     """Rastermap super neuron cache"""
 
@@ -418,9 +426,12 @@ class PositionDecodeOptions(AbstractParser):
         rate_map = train.take_along_trial_axis(rate_map, 1)
         rate_map = np.nanmean(rate_map, axis=1)[neuron_list]
 
-        trial_index = np.zeros((index[1] - index[0]) + 1, dtype=int)
+        trial_index = np.zeros((index[1] - index[0]) + 1, dtype=int)  # 0-based
         trial_index[train.selected_trials - index[0]] += 1  # train
         trial_index[test.selected_trials - index[0]] += 2  # test
+
+        self._current_train_trials = np.nonzero(trial_index == 1)[0]
+        self._current_test_trials = np.nonzero(trial_index == 2)[0]
 
         # fr
         fr = dat.activity[neuron_list]  # (N, T)
@@ -483,7 +494,7 @@ class PositionDecodeOptions(AbstractParser):
         :param agg_func: numpy attribute used for aggregate. by default use ``np.median()``
         :return:
         """
-        headers = ['n_cv', 'session', 'n_trials', f'decode_err']
+        headers = ['n_cv', 'session', 'n_trials', 'decode_err', 'trial_indices']  # TODO
 
         with csv_header(self.csv_output, headers, append=True) as csv:
             mask = time < self.dat.light_off_time  # TODO if add tol 4 trials?
@@ -513,20 +524,68 @@ class PositionDecodeOptions(AbstractParser):
         """
         filename = self.dat.filepath.stem + f'_decode_foreach_cv{self._current_train_test_index}.pdf'
         output = self.output_dir / filename if self.output_dir else None
-        with plot_figure(output, 3, 1, figsize=(15, 8), height_ratios=(1, 2, 1), sharex=True) as ax:
-            plot_decode_actual_position(ax[0], time, pred_pos, actual_pos)
+        with plot_figure(output, 5, 2, figsize=(15, 10)) as _ax:
+            ax0 = ax_merge(_ax)[0, :]
+            plot_decode_actual_position(ax0, time, pred_pos, actual_pos)
 
-            plot_firing_rate(ax[1], self.dat.act_time, fr_raw, ylabel=ylabel)
+            ax1 = ax_merge(_ax)[1:3, :]
+            ax1.sharex(ax0)
+            plot_firing_rate(ax1, self.dat.act_time, fr_raw, ylabel=ylabel)
 
+            ax2 = ax_merge(_ax)[3, :]
+            ax2.sharex(ax0)
             err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
-            plot_decoding_err(ax[2], time, err, light_off_time)
+            plot_decoding_error(ax2, time, err, light_off_time)
 
-    def load_devode_cv(self) -> pl.DataFrame:
+            # position binned
+            light_ret, dark_ret = self.calc_position_binned_error(time, pred_pos, actual_pos)
+
+            ax = _ax[4, 0]
+            plot_binned_decoding_error(ax, self.trial_length, light_ret[0], light_ret[1])
+
+            ax = _ax[4, 1]
+            plot_binned_decoding_error(ax, self.trial_length, dark_ret[0], dark_ret[1])
+
+    def calc_position_binned_error(self, time, pred_pos, actual_pos) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Take all the cv results of trial-averaged decoding error as a function of position bins
+
+        :param time:
+        :param pred_pos:
+        :param actual_pos:
+        :return: light/dark mean and sem decoding error. (Array[float, [2, B]], Array[float, [2, B]])
+        """
+        nbins = int(self.trial_length / self.spatial_bin_size)
+        pbs = PositionBinnedSig(self.dat, bin_range=(0, self.trial_length, nbins))
+
+        def get_binned_error(trial: np.ndarray) -> np.ndarray:
+            act = pbs.calc_binned_signal(time, actual_pos, trial, running_epoch=self.running_epoch)
+            pred = pbs.calc_binned_signal(time, pred_pos, trial, running_epoch=self.running_epoch)
+            binned_err = [self._wrap_diff(act[t], pred[t]) for t in range(len(trial))]
+            return np.vstack([np.mean(binned_err, axis=0),
+                              scipy.stats.sem(binned_err, axis=0)])
+
+        # (L, B)
+        test_trials = self._current_test_trials[:-1]  # exclude last incomplete
+
+        light = self.dat.light_off_lap
+        dark = self.dat.light_off_lap + 4  # tol
+
+        light_trials = test_trials[test_trials <= light]
+        dark_trials = test_trials[test_trials >= dark]
+
+        light_ret = get_binned_error(light_trials)
+        dark_ret = get_binned_error(dark_trials)
+
+        return light_ret, dark_ret
+
+    # TODO save as parquet
+    def load_decode_cv(self) -> pl.DataFrame:
         return pl.read_csv(self.csv_output)
 
     def plot_decode_cv(self):
         """Plot decode summary cross-validation testset results"""
-        df = self.load_devode_cv()
+        df = self.load_decode_cv()
         print(f'cv dataframe: {df}')
         filename = self.dat.filepath.stem + '_decode_summary.pdf'
         output = self.output_dir / filename if self.output_dir else None

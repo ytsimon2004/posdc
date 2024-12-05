@@ -5,7 +5,8 @@ from scipy.ndimage import gaussian_filter1d
 __all__ = [
     'plot_decode_actual_position',
     'plot_firing_rate',
-    'plot_decoding_err'
+    'plot_decoding_error',
+    'plot_binned_decoding_error'
 ]
 
 
@@ -45,19 +46,37 @@ def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, **kwargs):
     ax.set(**kwargs)
 
 
-def plot_decoding_err(ax: Axes, time: np.ndarray, decode_err: np.ndarray, cutoff: float):
+def plot_decoding_error(ax: Axes, time: np.ndarray, error: np.ndarray, cutoff: float):
     """
     Plot decoding error as a function of temporal bins
 
     :param ax: ``Axes``
     :param time: Time for decoding error. `Array[float, T]`
-    :param decode_err: Decoding error. `Array[float, T]`
+    :param error: Decoding error. `Array[float, T]`
     :param cutoff: Axvline cutoff for the different recording session (condition)
     """
-    ax.plot(time, decode_err, 'k.', alpha=0.3, label='frame-wise')
-    smooth_err = gaussian_filter1d(decode_err, 10)
+    ax.plot(time, error, 'k.', alpha=0.3, label='frame-wise')
+    smooth_err = gaussian_filter1d(error, 10)
     ax.plot(time, smooth_err, 'k.', label='smooth')
     ax.axvline(cutoff, color='r', linestyle='--')
     ax.set(xlabel='time(sec)', ylabel='decoding error (cm)', ylim=(0, 70))
     ax.legend()
 
+
+def plot_binned_decoding_error(ax: Axes,
+                               trial_length: float,
+                               error: np.ndarray,
+                               error_sem: np.ndarray):
+    """
+
+    :param ax: ``Axes``
+    :param trial_length: Trial length in cm
+    :param error: Trial-averaged binned decoding error. `Array[float, B]`
+    :param error_sem: sem binned decoding error across trials. `Array[float, B]`
+    :return:
+    """
+    n = len(error)
+    x = np.linspace(0, trial_length, n)
+    ax.plot(x, error)
+    ax.fill_between(x, error + error_sem, error - error_sem, color='grey', alpha=0.5)
+    ax.set(xlabel='position(cm)', ylabel='decoding error(cm)')

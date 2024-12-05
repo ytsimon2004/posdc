@@ -7,7 +7,8 @@ from scipy.ndimage import gaussian_filter1d
 
 from ._io import PositionDecodeInput
 
-__all__ = ['PositionRateMap']
+__all__ = ['PositionRateMap',
+           'PositionBinnedSig']
 
 
 class PositionRateMap:
@@ -25,7 +26,7 @@ class PositionRateMap:
         """
 
         self.dat = dat
-        self.pbs = _PositionBinnedSig(dat, bin_range=(0, dat.trial_length, n_bins), force_compute=force_compute)
+        self.pbs = PositionBinnedSig(dat, bin_range=(0, dat.trial_length, n_bins), force_compute=force_compute)
         self.sig_norm = sig_norm
 
     @property
@@ -86,7 +87,7 @@ class PositionRateMap:
 # PositionBinnedSig #
 # ================= #
 
-class _PositionBinnedSig:
+class PositionBinnedSig:
     """
     Calculation of Position Binned Signal
 

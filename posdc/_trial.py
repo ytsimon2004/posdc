@@ -56,7 +56,7 @@ class TrialSelection:
 
     @property
     def session_range(self) -> tuple[int, int]:
-        """Get session range (start, end)"""
+        """Get 0-based session range (start, end)"""
         r = self.dat.trial_index
         return int(r[0]), int(r[-1])
 
