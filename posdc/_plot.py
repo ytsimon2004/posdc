@@ -68,12 +68,12 @@ def plot_binned_decoding_error(ax: Axes,
                                error: np.ndarray,
                                error_sem: np.ndarray):
     """
+    Plot decoding error (mean+-sem) as a function of position bins
 
     :param ax: ``Axes``
     :param trial_length: Trial length in cm
     :param error: Trial-averaged binned decoding error. `Array[float, B]`
     :param error_sem: sem binned decoding error across trials. `Array[float, B]`
-    :return:
     """
     n = len(error)
     x = np.linspace(0, trial_length, n)

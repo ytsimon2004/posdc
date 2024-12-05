@@ -18,7 +18,6 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 from tqdm import trange
 
-from posdc._plot import plot_binned_decoding_error
 from ._io import PositionDecodeInput
 from ._plot import *
 from ._ratemap import PositionRateMap, PositionBinnedSig
@@ -288,6 +287,15 @@ class PositionDecodeOptions(AbstractParser):
         sz = len(self.train_test_list)
         return self.train_test_list[self._current_train_test_index % sz]
 
+    def get_test_trials(self, session: Literal['light', 'dark']) -> np.ndarray:
+        test_trials = self._current_test_trials[:-1]  # exclude last incomplete
+        if session == 'light':
+            return test_trials[test_trials <= self.dat.light_off_lap]
+        elif session == 'dark':
+            return test_trials[test_trials >= self.dat.light_off_lap + 4]  # tol
+        else:
+            raise ValueError('')
+
     def get_number_iter(self) -> int:
         match self.cross_validation, self.n_repeats:
             case (int(cv), None) if cv > 0:
@@ -494,7 +502,7 @@ class PositionDecodeOptions(AbstractParser):
         :param agg_func: numpy attribute used for aggregate. by default use ``np.median()``
         :return:
         """
-        headers = ['n_cv', 'session', 'n_trials', 'decode_err', 'trial_indices']  # TODO
+        headers = ['n_cv', 'session', 'n_trials', 'decode_err', 'trial_indices']
 
         with csv_header(self.csv_output, headers, append=True) as csv:
             mask = time < self.dat.light_off_time  # TODO if add tol 4 trials?
@@ -509,7 +517,9 @@ class PositionDecodeOptions(AbstractParser):
                     error = func(err[~mask])
                     n_trials = np.count_nonzero(test.selected_trials >= self.dat.light_off_lap)
 
-                csv(self._current_train_test_index, session, n_trials, error)
+                trials = self.get_test_trials(session).astype(str).tolist()
+                trials = ' '.join(trials)
+                csv(self._current_train_test_index, session, n_trials, error, trials)
 
     def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_off_time, ylabel):
         """
@@ -529,22 +539,24 @@ class PositionDecodeOptions(AbstractParser):
             plot_decode_actual_position(ax0, time, pred_pos, actual_pos)
 
             ax1 = ax_merge(_ax)[1:3, :]
-            ax1.sharex(ax0)
             plot_firing_rate(ax1, self.dat.act_time, fr_raw, ylabel=ylabel)
+            ax1.sharex(ax0)
 
             ax2 = ax_merge(_ax)[3, :]
-            ax2.sharex(ax0)
             err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
             plot_decoding_error(ax2, time, err, light_off_time)
+            ax2.sharex(ax0)
 
             # position binned
             light_ret, dark_ret = self.calc_position_binned_error(time, pred_pos, actual_pos)
-
             ax = _ax[4, 0]
             plot_binned_decoding_error(ax, self.trial_length, light_ret[0], light_ret[1])
+            ax.set_title('light')
 
             ax = _ax[4, 1]
             plot_binned_decoding_error(ax, self.trial_length, dark_ret[0], dark_ret[1])
+            ax.sharey(_ax[4, 0])
+            ax.set_title('dark')
 
     def calc_position_binned_error(self, time, pred_pos, actual_pos) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -565,21 +577,13 @@ class PositionDecodeOptions(AbstractParser):
             return np.vstack([np.mean(binned_err, axis=0),
                               scipy.stats.sem(binned_err, axis=0)])
 
-        # (L, B)
-        test_trials = self._current_test_trials[:-1]  # exclude last incomplete
-
-        light = self.dat.light_off_lap
-        dark = self.dat.light_off_lap + 4  # tol
-
-        light_trials = test_trials[test_trials <= light]
-        dark_trials = test_trials[test_trials >= dark]
-
+        light_trials = self.get_test_trials('light')
+        dark_trials = self.get_test_trials('dark')
         light_ret = get_binned_error(light_trials)
         dark_ret = get_binned_error(dark_trials)
 
         return light_ret, dark_ret
 
-    # TODO save as parquet
     def load_decode_cv(self) -> pl.DataFrame:
         return pl.read_csv(self.csv_output)
 

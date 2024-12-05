@@ -114,23 +114,24 @@ Output Files
 
 - Example output from 5-fold non-repeated cross-validation
 
-| n_cv | session | n_trials | decode_err |
-|------|---------|----------|------------|
-| 0    | light   | 17       | 6.506346   |
-| 0    | dark    | 64       | 33.359664  |
-| 1    | light   | 16       | 6.211329   |
-| 1    | dark    | 64       | 34.97227   |
-| 2    | light   | 16       | 5.990199   |
-| 2    | dark    | 64       | 35.223511  |
-| 3    | light   | 16       | 5.608659   |
-| 3    | dark    | 64       | 35.161925  |
-| 4    | light   | 16       | 5.813293   |
-| 4    | dark    | 64       | 34.579645  |
+| n_cv | session | n_trials | decode_err | trial_indices   |
+|------|---------|----------|------------|-----------------|
+| 0    | light   | 17       | 6.506346   | 9 13 17 22 ...  |
+| 0    | dark    | 64       | 33.359664  | ...             |
+| 1    | light   | 16       | 6.211329   | ...             |
+| 1    | dark    | 64       | 34.97227   | ...             |
+| 2    | light   | 16       | 5.990199   | ...             |
+| 2    | dark    | 64       | 35.223511  | ...             |
+| 3    | light   | 16       | 5.608659   | ...             |
+| 3    | dark    | 64       | 35.161925  | ...             |
+| 4    | light   | 16       | 5.813293   | ...             |
+| 4    | dark    | 64       | 34.579645  | ...             |
 
 - `n_cv`: Number of the cross validation
 - `session`: Which session of the test dataset
 - `n_trials`: Number of trials of the test dataset
-- `decode_error`: Mean/median decode error for the session
+- `decode_err`: Mean/median decode error for the session
+- `trial_indices`: trial indices for test set
 
 ### Cache
 
