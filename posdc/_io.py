@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Literal
 
 import numpy as np
 import pandas as pd
@@ -8,6 +8,8 @@ from neuralib.typing import PathLike
 from typing_extensions import Self
 
 __all__ = ['PositionDecodeInput']
+
+LOAD_INPUT_BACKEND = Literal['numpy', 'pandas']
 
 
 class PositionDecodeInput(NamedTuple):
@@ -51,25 +53,64 @@ class PositionDecodeInput(NamedTuple):
     trial_length: int
     """Trial length in cm"""
 
-    # noinspection PyUnresolvedReferences
+
     @classmethod
-    def load_hdf(cls, file: PathLike,
-                 use_deconv: bool = False,
-                 trial_length: int = 150) -> Self:
+    def load(cls, file: PathLike,
+             *,
+             use_deconv: bool = False,
+             trial_length: int | None = None,
+             backend: LOAD_INPUT_BACKEND = 'pandas') -> Self:
         """
-        Load data from *.hdf
+        Load data
 
         :param file: Filepath
         :param use_deconv: Whether deconvolved, otherwise use df/f
         :param trial_length: Trial length in cm
+        :param backend: Backend for loading data, default is 'pandas'
         :return: ``PositionDecodeInput``
         """
+
+        if backend == 'pandas':
+            return cls._load_hdf(file, use_deconv, trial_length)
+        elif backend == 'numpy':
+            return cls._load_npy(file, use_deconv)
+        else:
+            raise ValueError(f'Unsupported backend: {backend}')
+
+    # noinspection PyUnresolvedReferences
+    @classmethod
+    def _load_hdf(cls, file, use_deconv, trial_length) -> Self:
+        """Use only in Joao's dataset"""
         dat = pd.read_hdf(file)
         act = dat.deconv if use_deconv else dat.df_f
 
-        return cls(Path(file), act, dat.frametimes,
-                   dat.position_raw, dat.position_time,
-                   dat.laptimes, dat.lights_off_lap, dat.lights_off_time, trial_length)
+        return cls(
+            Path(file),
+            act,
+            dat.frametimes,
+            dat.position_raw,
+            dat.position_time,
+            dat.laptimes,
+            dat.lights_off_lap,
+            dat.lights_off_time,
+            trial_length
+        )
+
+    @classmethod
+    def _load_npy(cls, file, use_deconv) -> Self:
+        """Formal load"""
+        dat = np.load(file)
+        return cls(
+            Path(file),
+            dat['spks'] if use_deconv else dat['df_f'],
+            dat['act_time'],
+            dat['position'],
+            dat['position_time'],
+            dat['lap_time'],
+            dat['lights_off_lap'],
+            dat['lights_off_time'],
+            dat['trial_length']
+        )
 
     @property
     def n_neurons(self) -> int:
@@ -132,7 +173,8 @@ class PositionDecodeInput(NamedTuple):
                                self.position,
                                norm_max_value=self.trial_length,
                                sampling_rate=sampling_rate)
-            np.savez(self.position_cache_file, t=pos.t, p=pos.p, d=pos.d, v=pos.v, trial_time_index=pos.trial_time_index)
+            np.savez(self.position_cache_file, t=pos.t, p=pos.p, d=pos.d, v=pos.v,
+                     trial_time_index=pos.trial_time_index)
             return pos
         else:
             pos = np.load(self.position_cache_file, allow_pickle=True)

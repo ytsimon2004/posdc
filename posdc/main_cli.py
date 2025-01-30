@@ -18,7 +18,7 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 from tqdm import trange
 
-from ._io import PositionDecodeInput
+from ._io import PositionDecodeInput, LOAD_INPUT_BACKEND
 from ._plot import *
 from ._ratemap import PositionRateMap, PositionBinnedSig
 from ._trial import TrialSelection
@@ -37,6 +37,10 @@ TRAIN_OPTIONS = Literal[
 class PositionDecodeOptions(AbstractParser):
     DESCRIPTION = "Bayes decoding of animal's position in an linear environment"
 
+    # ============= #
+    # IO Input Load #
+    # ============= #
+
     file: PathLike = argument(
         '-F', '--file',
         help='hdf data file path',
@@ -45,6 +49,12 @@ class PositionDecodeOptions(AbstractParser):
     use_deconv: bool = argument(
         '--deconv',
         help='use deconv activity, otherwise, df_f',
+    )
+
+    load_backend: LOAD_INPUT_BACKEND = argument(
+        '--load-backend',
+        default='pandas',
+        help='backend for loading data, default is `pandas`'
     )
 
     # ================= #
@@ -153,7 +163,7 @@ class PositionDecodeOptions(AbstractParser):
         type=int,
         default=None,
         group=GROUP_RANDOM,
-        help='number of random neurons'
+        help='number of random neurons. If None, then use all neurons'
     )
 
     seed: int | None = argument(
@@ -233,7 +243,10 @@ class PositionDecodeOptions(AbstractParser):
 
     def run(self):
         # set attrs
-        self.dat = PositionDecodeInput.load_hdf(self.file, use_deconv=self.use_deconv, trial_length=self.trial_length)
+        self.dat = PositionDecodeInput.load(self.file,
+                                            use_deconv=self.use_deconv,
+                                            trial_length=self.trial_length,
+                                            backend=self.load_backend)
         trial = TrialSelection(self.dat)
         self.train_test_list = self.train_test_split(trial)
 
