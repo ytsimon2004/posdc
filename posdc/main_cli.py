@@ -6,7 +6,7 @@ from typing import Literal
 import numpy as np
 import polars as pl
 import scipy
-from neuralib.argp import AbstractParser, argument
+from neuralib.argp import AbstractParser, argument, float_tuple_type
 from neuralib.calimg.suite2p import normalize_signal
 from neuralib.io import csv_header
 from neuralib.model.bayes_decoding import place_bayes
@@ -200,6 +200,18 @@ class PositionDecodeOptions(AbstractParser):
     # ============ #
 
     GROUP_PLOTTING = 'Plotting Options'
+
+    perc_norm: tuple[float, float] = argument(
+        '--perc-norm',
+        type=float_tuple_type,
+        default=None,
+        help='Lower and upper percentile bounds for the fr_raw, for the visualization of population activity'
+    )
+
+    with_train_position: bool = argument(
+        '--with-train',
+        help='plot the '
+    )
 
     ignore_foreach_plot: bool = argument(
         '--ignore-foreach',
@@ -426,7 +438,7 @@ class PositionDecodeOptions(AbstractParser):
 
     def run_decode(self, rate_map: np.ndarray,
                    trial: TrialSelection,
-                   neuron_list: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+                   neuron_list: np.ndarray) -> None:
         """
         Run the decoding analysis.
 
@@ -458,6 +470,16 @@ class PositionDecodeOptions(AbstractParser):
         fr = dat.activity[neuron_list]  # (N, T)
         fr = fr_raw = normalize_signal(fr)
 
+        # Compute lower and upper percentile bounds
+        if self.perc_norm is not None:
+            lower, upper = self.perc_norm
+            lp = np.percentile(fr_raw, lower, axis=1, keepdims=True)
+            up = np.percentile(fr_raw, upper, axis=1, keepdims=True)
+
+            fr_raw = (fr_raw - lp) / (up - lp)
+            fr_raw = np.clip(fr_raw, 0, 1)
+
+        # Sort
         if self.rastermap_sort:
             from ._rastermap import run_rastermap
             fr_raw = self.get_rastermap_sn(fr_raw)
@@ -480,6 +502,15 @@ class PositionDecodeOptions(AbstractParser):
                 position_down_sampling=not self.no_position_down_sampling
             )
 
+        # actual (train set)
+        if self.with_train_position:
+            t_mask = train.masking_time(time)
+            train_pos = position[t_mask]
+            train_time = time[t_mask]
+        else:
+            train_pos = None
+            train_time = None
+
         # actual (test set)
         t_mask = test.masking_time(time)
         fr = fr[:, t_mask]
@@ -493,11 +524,11 @@ class PositionDecodeOptions(AbstractParser):
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
         if not self.ignore_foreach_plot:
-            self.plot_decode_foreach(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel)
+            self.plot_decode_foreach(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel,
+                                     train_pos=train_pos,
+                                     train_time=train_time)
 
         self.log_output_csv(test, time, predict_pos, actual_pos)
-
-        return pr, predict_pos
 
     def log_output_csv(self,
                        test: TrialSelection,
@@ -534,7 +565,9 @@ class PositionDecodeOptions(AbstractParser):
                 trials = ' '.join(trials)
                 csv(self._current_train_test_index, session, n_trials, error, trials)
 
-    def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_off_time, ylabel):
+    def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_off_time, ylabel, *,
+                            train_pos: np.ndarray | None = None,
+                            train_time: np.ndarray | None = None):
         """
         Plot decode results foreach iteration
 
@@ -544,12 +577,16 @@ class PositionDecodeOptions(AbstractParser):
         :param fr_raw: Raw firing. `Array[float, [Traw, N | N']]`
         :param light_off_time: Time of light off in sec
         :param ylabel: ylabel for the firing activity
+        :param train_pos: Train position. `Array[float, TT]`
+        :param train_time: Train time. `Array[float, TT]`
         """
         filename = self.dat.filepath.stem + f'_decode_foreach_cv{self._current_train_test_index}.pdf'
         output = self.output_dir / filename if self.output_dir else None
         with plot_figure(output, 5, 2, figsize=(15, 10)) as _ax:
             ax0 = ax_merge(_ax)[0, :]
             plot_decode_actual_position(ax0, time, pred_pos, actual_pos)
+            if train_pos is not None and train_time is not None:
+                plot_train_position(ax0, train_time, train_pos)
 
             ax1 = ax_merge(_ax)[1:3, :]
             plot_firing_rate(ax1, self.dat.act_time, fr_raw, ylabel=ylabel)

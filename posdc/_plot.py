@@ -4,6 +4,7 @@ from scipy.ndimage import gaussian_filter1d
 
 __all__ = [
     'plot_decode_actual_position',
+    'plot_train_position',
     'plot_firing_rate',
     'plot_decoding_error',
     'plot_binned_decoding_error'
@@ -22,8 +23,16 @@ def plot_decode_actual_position(ax: Axes,
     :param predicted_pos: Predicted animal's position. `Array[float, T]`
     :param actual_pos: Actual animal's position. `Array[float, T]`
     """
-    ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, markerfacecolor=None)
-    ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3)
+    kwargs = {'markerfacecolor': None, 'markersize': 3}
+    ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, **kwargs)
+    ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3, **kwargs)
+    ax.set(ylabel='position(cm)')
+    ax.legend()
+
+
+def plot_train_position(ax: Axes, time: np.ndarray, pos: np.ndarray):
+    kwargs = {'markerfacecolor': None, 'markersize': 3}
+    ax.plot(time, pos, 'g.', label='train', alpha=0.5, **kwargs)
     ax.set(ylabel='position(cm)')
     ax.legend()
 
@@ -39,8 +48,8 @@ def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, **kwargs):
     """
     ax.imshow(fr.T,
               aspect='auto',
-              cmap='binary',
-              interpolation='none',
+              cmap='cividis',
+              # interpolation='none',
               origin='lower',
               extent=(0, np.max(time), 0, fr.shape[1]))
     ax.set(**kwargs)
