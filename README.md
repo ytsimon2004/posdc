@@ -110,28 +110,31 @@ Output Files
 - `decode_foreach_cv*.pdf`: Foreach cross validation results
 - `decode_summary.pdf`: Summary of cross validation in light versus dark
 
-### CSV file
+### Parquet file
 
 - Example output from 5-fold non-repeated cross-validation
 
-| n_cv | session | n_trials | decode_err | trial_indices   |
-|------|---------|----------|------------|-----------------|
-| 0    | light   | 17       | 6.506346   | 9 13 17 22 ...  |
-| 0    | dark    | 64       | 33.359664  | ...             |
-| 1    | light   | 16       | 6.211329   | ...             |
-| 1    | dark    | 64       | 34.97227   | ...             |
-| 2    | light   | 16       | 5.990199   | ...             |
-| 2    | dark    | 64       | 35.223511  | ...             |
-| 3    | light   | 16       | 5.608659   | ...             |
-| 3    | dark    | 64       | 35.161925  | ...             |
-| 4    | light   | 16       | 5.813293   | ...             |
-| 4    | dark    | 64       | 34.579645  | ...             |
+| n_cv (i64) | session (str) | n_trials (i64) | decode_err (f64) | trial_indices (list[i64]) | binned_err (list[f64])           |
+|------------|---------------|----------------|------------------|---------------------------|----------------------------------|
+| 0          | light         | 10             | 3.635864         | [5, 7, … 47]              | [22.904429, 18.559892, … 17.09…] |
+| 0          | dark          | 81             | 8.658199         | [51, 52, … 126]           | [30.071842, 23.799756, … 30.65…] |
+| 1          | light         | 10             | 5.738808         | [0, 1, … 47]              | [22.249407, 12.599134, … 17.27…] |
+| 1          | dark          | 81             | 9.701644         | [51, 52, … 126]           | [27.65329, 17.79454, … 27.6105…] |
+| 2          | light         | 9              | 4.084523         | [3, 9, … 47]              | [16.561472, 19.38851, … 19.172…] |
+| 2          | dark          | 81             | 9.151024         | [51, 52, … 126]           | [27.966511, 20.448634, … 28.03…] |
+| 3          | light         | 9              | 3.85323          | [4, 6, … 47]              | [38.950859, 13.562917, … 27.73…] |
+| 3          | dark          | 81             | 8.98436          | [51, 52, … 126]           | [28.859011, 19.658932, … 27.56…] |
+| 4          | light         | 9              | 4.877178         | [2, 24, … 47]             | [26.855452, 5.773164, … 16.729…] |
+| 4          | dark          | 81             | 9.153177         | [51, 52, … 126]           | [27.265134, 19.030994, … 28.35…] |
+
+
 
 - `n_cv`: Number of the cross validation
 - `session`: Which session of the test dataset
 - `n_trials`: Number of trials of the test dataset
 - `decode_err`: Mean/median decode error for the session
 - `trial_indices`: trial indices for test set
+- `binned_err`: Binned decoding error, length equal to number of bins
 
 ### Cache
 
@@ -148,6 +151,7 @@ TODO/BUGFIX
   using `--random-neuron`
 - [ ] Test for the `--seed` usage
 - [ ] Statistic for cv summary if needed
+- [ ] Other behavioral session support
 
 Annotations
 -----------

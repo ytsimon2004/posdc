@@ -7,7 +7,10 @@ from neuralib.locomotion import CircularPosition
 from neuralib.typing import PathLike
 from typing_extensions import Self
 
-__all__ = ['PositionDecodeInput']
+__all__ = [
+    'LOAD_INPUT_BACKEND',
+    'PositionDecodeInput'
+]
 
 LOAD_INPUT_BACKEND = Literal['numpy', 'pandas']
 
@@ -52,7 +55,6 @@ class PositionDecodeInput(NamedTuple):
 
     trial_length: int
     """Trial length in cm"""
-
 
     @classmethod
     def load(cls, file: PathLike,

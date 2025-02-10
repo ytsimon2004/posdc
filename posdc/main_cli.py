@@ -267,9 +267,9 @@ class PositionDecodeOptions(AbstractParser):
         rate_map = self.get_ratemap()
 
         # io
-        if self.csv_output.exists():
-            self.csv_output.unlink()
-            fprint(f'Auto delete existed csv due to the append mode: {self.csv_output}', vtype='io')
+        if self._csv_output.exists():
+            self._csv_output.unlink()
+            fprint(f'Auto delete existed csv due to the append mode: {self._csv_output}', vtype='io')
 
         if self.output_dir is not None:
             ensure_dir(self.output_dir)
@@ -279,6 +279,7 @@ class PositionDecodeOptions(AbstractParser):
             self._current_train_test_index = i
             self.run_decode(rate_map, trial, self.neuron_list)
 
+        self.csv_to_parquet()
         self.plot_decode_cv()
 
     @cached_property
@@ -303,9 +304,15 @@ class PositionDecodeOptions(AbstractParser):
         return np.nonzero(ret)[0]
 
     @property
-    def csv_output(self) -> Path:
+    def _csv_output(self) -> Path:
+        """for tmp append write"""
         file = self.dat.filepath
         return file.with_name(file.stem + '_test_result').with_suffix('.csv')
+
+    @property
+    def parquet_output(self) -> Path:
+        file = self.dat.filepath
+        return file.with_name(file.stem + '_test_result').with_suffix('.parquet')
 
     @property
     def current_train_test(self) -> tuple[TrialSelection, TrialSelection]:
@@ -523,18 +530,32 @@ class PositionDecodeOptions(AbstractParser):
         pr = place_bayes(fr, rate_map, self.spatial_bin_size)
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
+        #
+        binned_err_light, binned_err_dark = self.calc_position_binned_error(time, predict_pos, actual_pos)
+
         if not self.ignore_foreach_plot:
-            self.plot_decode_foreach(time, predict_pos, actual_pos, fr_raw.T, self.dat.light_off_time, ylabel,
-                                     train_pos=train_pos,
-                                     train_time=train_time)
+            self.plot_decode_foreach(
+                time,
+                predict_pos,
+                actual_pos,
+                fr_raw.T,
+                binned_err_light,
+                binned_err_dark,
+                self.dat.light_off_time,
+                ylabel,
+                train_pos=train_pos,
+                train_time=train_time
+            )
 
-        self.log_output_csv(test, time, predict_pos, actual_pos)
+        self.log_output_csv(test, time, predict_pos, actual_pos, binned_err_light[0], binned_err_dark[0])
 
-    def log_output_csv(self,
-                       test: TrialSelection,
+    def log_output_csv(self, test: TrialSelection,
                        time: np.ndarray,
                        pred_pos: np.ndarray,
                        actual_pos: np.ndarray,
+                       binned_err_light: np.ndarray,
+                       binned_err_dark: np.ndarray,
+                       *,
                        agg_func: Literal['median', 'mean'] = 'median'):
         """
         Log cv foreach results to csv
@@ -543,38 +564,60 @@ class PositionDecodeOptions(AbstractParser):
         :param time: Time for test dataset. `Array[float, T]`
         :param pred_pos: Predicted position. `Array[float, T]`
         :param actual_pos: Actual position. `Array[float, T]`
+        :param binned_err_light: Binned error in light. `Array[float, B]`
+        :param binned_err_dark: Binned error in light. `Array[float, B]`
         :param agg_func: numpy attribute used for aggregate. by default use ``np.median()``
         :return:
         """
-        headers = ['n_cv', 'session', 'n_trials', 'decode_err', 'trial_indices']
+        headers = ['n_cv', 'session', 'n_trials', 'decode_err', 'trial_indices', 'binned_err']
 
-        with csv_header(self.csv_output, headers, append=True) as csv:
+        with csv_header(self._csv_output, headers, append=True) as csv:
             mask = time < self.dat.light_off_time  # TODO if add tol 4 trials?
             err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
-
             func = getattr(np, agg_func)
+
+            def _array_to_str(array: np.ndarray) -> str:
+                return ' '.join(array.astype(np.str_).tolist())
+
             for session in ('light', 'dark'):
+
                 if session == 'light':
                     error = func(err[mask])
                     n_trials = np.count_nonzero(test.selected_trials < self.dat.light_off_lap)
+                    binned_err = binned_err_light
                 else:
                     error = func(err[~mask])
                     n_trials = np.count_nonzero(test.selected_trials >= self.dat.light_off_lap)
+                    binned_err = binned_err_dark
 
-                trials = self.get_test_trials(session).astype(str).tolist()
-                trials = ' '.join(trials)
-                csv(self._current_train_test_index, session, n_trials, error, trials)
+                trials = _array_to_str(self.get_test_trials(session))
+                binned_err = _array_to_str(binned_err)
 
-    def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_off_time, ylabel, *,
+                csv(self._current_train_test_index, session, n_trials, error, trials, binned_err)
+
+    def csv_to_parquet(self) -> pl.DataFrame:
+        """parse tmp csv to parquet for array like table storage"""
+        df = pl.read_csv(self._csv_output)
+        df = (df.with_columns(pl.col('trial_indices').str.split(' ').cast(pl.List(pl.Int64)))
+              .with_columns(pl.col('binned_err').str.split(' ').cast(pl.List(pl.Float64))))
+
+        self._csv_output.unlink()
+        df.write_parquet(self.parquet_output)
+
+        return df
+
+    def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_err, dark_err, light_off_time, ylabel, *,
                             train_pos: np.ndarray | None = None,
                             train_time: np.ndarray | None = None):
         """
         Plot decode results foreach iteration
 
-        :param time: Time for test dataset. `Array[float, T]`
+        :param time: Time Array in sec. `Array[float, T]`
         :param pred_pos: Predicted position. `Array[float, T]`
         :param actual_pos: Actual position. `Array[float, T]`
         :param fr_raw: Raw firing. `Array[float, [Traw, N | N']]`
+        :param light_err: Binned decoding error in light session. `Array[float, [2, B]]`
+        :param dark_err: Binned decoding error in dark session. `Array[float, [2, B]]`
         :param light_off_time: Time of light off in sec
         :param ylabel: ylabel for the firing activity
         :param train_pos: Train position. `Array[float, TT]`
@@ -585,6 +628,7 @@ class PositionDecodeOptions(AbstractParser):
         with plot_figure(output, 5, 2, figsize=(15, 10)) as _ax:
             ax0 = ax_merge(_ax)[0, :]
             plot_decode_actual_position(ax0, time, pred_pos, actual_pos)
+
             if train_pos is not None and train_time is not None:
                 plot_train_position(ax0, train_time, train_pos)
 
@@ -598,13 +642,12 @@ class PositionDecodeOptions(AbstractParser):
             ax2.sharex(ax0)
 
             # position binned
-            light_ret, dark_ret = self.calc_position_binned_error(time, pred_pos, actual_pos)
             ax = _ax[4, 0]
-            plot_binned_decoding_error(ax, self.trial_length, light_ret[0], light_ret[1])
+            plot_binned_decoding_error(ax, self.trial_length, light_err[0], light_err[1])
             ax.set_title('light')
 
             ax = _ax[4, 1]
-            plot_binned_decoding_error(ax, self.trial_length, dark_ret[0], dark_ret[1])
+            plot_binned_decoding_error(ax, self.trial_length, dark_err[0], dark_err[1])
             ax.sharey(_ax[4, 0])
             ax.set_title('dark')
 
@@ -634,17 +677,15 @@ class PositionDecodeOptions(AbstractParser):
 
         return light_ret, dark_ret
 
-    def load_decode_cv(self) -> pl.DataFrame:
-        return pl.read_csv(self.csv_output)
-
     def plot_decode_cv(self):
         """Plot decode summary cross-validation testset results"""
-        df = self.load_decode_cv()
+        df = pl.read_parquet(self.parquet_output)
         print(f'cv dataframe: {df}')
+
         filename = self.dat.filepath.stem + '_decode_summary.pdf'
         output = self.output_dir / filename if self.output_dir else None
         with plot_figure(output, figsize=(3, 8)) as ax:
-            violin_boxplot(ax, df, x='session', y='decode_err')
+            violin_boxplot(ax, df.to_pandas(), x='session', y='decode_err')
             ax.set(ylabel='decode_error(cm)', ylim=(0, 40))
 
     @staticmethod
