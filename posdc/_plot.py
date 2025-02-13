@@ -14,7 +14,8 @@ __all__ = [
 def plot_decode_actual_position(ax: Axes,
                                 time: np.ndarray,
                                 predicted_pos: np.ndarray,
-                                actual_pos: np.ndarray):
+                                actual_pos: np.ndarray,
+                                time_mask: tuple[float, float] | None = None):
     """
     Plot decoded/actual animal's position
 
@@ -22,13 +23,18 @@ def plot_decode_actual_position(ax: Axes,
     :param time: Time for animal's position. `Array[float, T]`
     :param predicted_pos: Predicted animal's position. `Array[float, T]`
     :param actual_pos: Actual animal's position. `Array[float, T]`
+    :param time_mask: Time masking (START, END)
     """
-    kwargs = {'markerfacecolor': None, 'markersize': 3}
-    ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, **kwargs)
-    ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3, **kwargs)
-    ax.set(ylabel='position(cm)')
-    ax.legend()
+    plot_kw = {'markerfacecolor': None, 'markersize': 3}
+    ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, **plot_kw)
+    ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3, **plot_kw)
 
+    if time_mask is not None:
+        ax.set(ylabel='position(cm)', xlim=time_mask)
+    else:
+        ax.set(ylabel='position(cm)')  # keep correct extend
+
+    ax.legend()
 
 def plot_train_position(ax: Axes, time: np.ndarray, pos: np.ndarray):
     kwargs = {'markerfacecolor': None, 'markersize': 3}
@@ -37,21 +43,24 @@ def plot_train_position(ax: Axes, time: np.ndarray, pos: np.ndarray):
     ax.legend()
 
 
-def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, **kwargs):
+def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, time_mask: tuple[float, float] | None, **kwargs):
     """
     Heatmap for activity
 
     :param ax: ``Axes``
     :param time: Activity time. `Array[float, T]`
     :param fr: Neural activity. `Array[float, [N, T]]`
+    :param time_mask: Time masking (START, END)
     :param kwargs: Additional arguments pass to ``ax.set()``
     """
-    ax.imshow(fr.T,
-              aspect='auto',
-              cmap='cividis',
+    if time_mask is None:
+        time_mask = (0, np.max(time))
+
+    ax.imshow(fr.T, aspect='auto',
+              cmap='Greys',
               # interpolation='none',
               origin='lower',
-              extent=(0, np.max(time), 0, fr.shape[1]))
+              extent=(*time_mask, 0, fr.shape[1]))
     ax.set(**kwargs)
 
 

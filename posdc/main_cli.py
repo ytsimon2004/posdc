@@ -13,7 +13,7 @@ from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure, violin_boxplot, ax_merge
 from neuralib.typing import PathLike
 from neuralib.util.utils import ensure_dir
-from neuralib.util.verbose import fprint
+from neuralib.util.verbose import fprint, print_save
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 from tqdm import trange
@@ -201,22 +201,43 @@ class PositionDecodeOptions(AbstractParser):
 
     GROUP_PLOTTING = 'Plotting Options'
 
+    smooth_fr: bool = argument(
+        '--smooth',
+        group=GROUP_PLOTTING,
+        help='Do smooth of raw firing (N, T) heatmap'
+    )
+
+    time_mask: tuple[float, float] | None = argument(
+        '--time-mask',
+        type=float_tuple_type,
+        group=GROUP_PLOTTING,
+        help='time mask for plotting. (START, END) in seconds',
+    )
+
     perc_norm: tuple[float, float] = argument(
         '--perc-norm',
         type=float_tuple_type,
+        group=GROUP_PLOTTING,
         default=None,
         help='Lower and upper percentile bounds for the fr_raw, for the visualization of population activity'
     )
 
     with_train_position: bool = argument(
         '--with-train',
-        help='plot the '
+        group=GROUP_PLOTTING,
+        help='plot the train set trials'
     )
 
     ignore_foreach_plot: bool = argument(
         '--ignore-foreach',
         group=GROUP_PLOTTING,
         help='whether to ignore foreach cv plot, and only plot the summary result',
+    )
+
+    no_interactive: bool = argument(
+        '--no-interact',
+        group=GROUP_PLOTTING,
+        help='Do not render any interactive qt plot'
     )
 
     output_dir: Path | None = argument(
@@ -280,7 +301,9 @@ class PositionDecodeOptions(AbstractParser):
             self.run_decode(rate_map, trial, self.neuron_list)
 
         self.csv_to_parquet()
-        self.plot_decode_cv()
+
+        if not self.no_interactive:
+            self.plot_decode_cv()
 
     @cached_property
     def neuron_list(self) -> np.ndarray:
@@ -533,7 +556,7 @@ class PositionDecodeOptions(AbstractParser):
         #
         binned_err_light, binned_err_dark = self.calc_position_binned_error(time, predict_pos, actual_pos)
 
-        if not self.ignore_foreach_plot:
+        if not self.ignore_foreach_plot and not self.no_interactive:
             self.plot_decode_foreach(
                 time,
                 predict_pos,
@@ -543,8 +566,10 @@ class PositionDecodeOptions(AbstractParser):
                 binned_err_dark,
                 self.dat.light_off_time,
                 ylabel,
+                time_mask=self.time_mask,
                 train_pos=train_pos,
                 train_time=train_time
+
             )
 
         self.log_output_csv(test, time, predict_pos, actual_pos, binned_err_light[0], binned_err_dark[0])
@@ -603,10 +628,13 @@ class PositionDecodeOptions(AbstractParser):
 
         self._csv_output.unlink()
         df.write_parquet(self.parquet_output)
+        print_save(self.parquet_output)
+        print(df)
 
         return df
 
     def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_err, dark_err, light_off_time, ylabel, *,
+                            time_mask: tuple[float, float] | None = None,
                             train_pos: np.ndarray | None = None,
                             train_time: np.ndarray | None = None):
         """
@@ -620,33 +648,59 @@ class PositionDecodeOptions(AbstractParser):
         :param dark_err: Binned decoding error in dark session. `Array[float, [2, B]]`
         :param light_off_time: Time of light off in sec
         :param ylabel: ylabel for the firing activity
+        :param time_mask: Time mask interval. (START, END) in sec.
         :param train_pos: Train position. `Array[float, TT]`
         :param train_time: Train time. `Array[float, TT]`
         """
+        do_train_plot = False
+        raw_time = self.dat.act_time
+
+        if train_pos is not None and train_time is not None:
+            do_train_plot = True
+
+        # time masking
+        if time_mask is not None:
+            start, end = time_mask
+            mx = np.logical_and(time > start, time < end)
+            time = time[mx]
+            pred_pos = pred_pos[mx]
+            actual_pos = actual_pos[mx]
+
+            raw_mx = np.logical_and(raw_time > start, raw_time < end)
+            raw_time = raw_time[raw_mx]
+            fr_raw = fr_raw[raw_mx]
+
+            if do_train_plot:
+                mx = np.logical_and(train_time > start, train_time < end)
+                train_time = train_time[mx]
+                train_pos = train_pos[mx]
+
+        #
         filename = self.dat.filepath.stem + f'_decode_foreach_cv{self._current_train_test_index}.pdf'
         output = self.output_dir / filename if self.output_dir else None
-        with plot_figure(output, 5, 2, figsize=(15, 10)) as _ax:
-            ax0 = ax_merge(_ax)[0, :]
-            plot_decode_actual_position(ax0, time, pred_pos, actual_pos)
 
-            if train_pos is not None and train_time is not None:
+        with plot_figure(output, 7, 2, figsize=(12, 8)) as _ax:
+            ax0 = ax_merge(_ax)[:2, :]
+            plot_decode_actual_position(ax0, time, pred_pos, actual_pos, time_mask=time_mask)
+
+            if do_train_plot:
                 plot_train_position(ax0, train_time, train_pos)
 
-            ax1 = ax_merge(_ax)[1:3, :]
-            plot_firing_rate(ax1, self.dat.act_time, fr_raw, ylabel=ylabel)
+            ax1 = ax_merge(_ax)[2:4, :]
+            plot_firing_rate(ax1, raw_time, fr_raw, time_mask=self.time_mask, ylabel=ylabel)
             ax1.sharex(ax0)
 
-            ax2 = ax_merge(_ax)[3, :]
+            ax2 = ax_merge(_ax)[4:6, :]
             err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
             plot_decoding_error(ax2, time, err, light_off_time)
             ax2.sharex(ax0)
 
             # position binned
-            ax = _ax[4, 0]
+            ax = _ax[6, 0]
             plot_binned_decoding_error(ax, self.trial_length, light_err[0], light_err[1])
             ax.set_title('light')
 
-            ax = _ax[4, 1]
+            ax = _ax[6, 1]
             plot_binned_decoding_error(ax, self.trial_length, dark_err[0], dark_err[1])
             ax.sharey(_ax[4, 0])
             ax.set_title('dark')
@@ -680,8 +734,6 @@ class PositionDecodeOptions(AbstractParser):
     def plot_decode_cv(self):
         """Plot decode summary cross-validation testset results"""
         df = pl.read_parquet(self.parquet_output)
-        print(f'cv dataframe: {df}')
-
         filename = self.dat.filepath.stem + '_decode_summary.pdf'
         output = self.output_dir / filename if self.output_dir else None
         with plot_figure(output, figsize=(3, 8)) as ax:
