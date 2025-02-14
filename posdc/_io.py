@@ -50,8 +50,8 @@ class PositionDecodeInput(NamedTuple):
     light_off_lap: int
     """Lap index for light off epoch"""
 
-    light_off_time: float
-    """Time for light off epoch"""
+    light_off_time: float | tuple[float, float]
+    """Time for light off epoch. If tuple type, represent the light off interval"""
 
     trial_length: int
     """Trial length in cm"""
@@ -101,7 +101,12 @@ class PositionDecodeInput(NamedTuple):
     @classmethod
     def _load_npy(cls, file, use_deconv) -> Self:
         """Formal load"""
-        dat = np.load(file)
+        dat = np.load(file, allow_pickle=True)
+        light_off_time = dat['lights_off_time']
+
+        if not isinstance(light_off_time, (float, int)):
+            light_off_time = tuple(light_off_time)  # casting
+
         return cls(
             Path(file),
             dat['spks'] if use_deconv else dat['df_f'],
@@ -109,9 +114,9 @@ class PositionDecodeInput(NamedTuple):
             dat['position'],
             dat['position_time'],
             dat['lap_time'],
-            dat['lights_off_lap'],
-            dat['lights_off_time'],
-            dat['trial_length']
+            int(dat['lights_off_lap']),
+            light_off_time,
+            int(dat['trial_length'])
         )
 
     @property
@@ -137,10 +142,23 @@ class PositionDecodeInput(NamedTuple):
     def trial_index(self) -> np.ndarray:
         return np.arange(self.n_trials)
 
+    @property
+    def light_end_lap(self) -> int:
+        return self.get_light_end_trange()[0]
+
+    def endswith_dark(self) -> bool:
+        if isinstance(self.light_off_time, tuple):
+            return False
+        elif isinstance(self.light_off_time, (float, int)):
+            return True
+        else:
+            raise TypeError(f'unsupported type light off time: {type(self.light_off_time)}')
+
     def get_light_trange(self) -> tuple[int, int]:
         """Trial range of the light session (START, STOP)"""
-        x = self.lap_time < self.light_off_time
-        ret = self.trial_index[x]
+        dark_start = self.light_off_time if self.endswith_dark() else self.light_off_time[0]
+        mx = self.lap_time < dark_start
+        ret = self.trial_index[mx]
 
         return int(ret[0]), int(ret[-1])
 
@@ -151,10 +169,24 @@ class PositionDecodeInput(NamedTuple):
         :param tol: tolerance (delay) buffer trials after lights-off
         :return: Trial range of the dark session (START, STOP)
         """
-        x = self.lap_time >= self.light_off_time
-        ret = self.trial_index[x]
+        if self.endswith_dark():
+            mx = self.lap_time >= self.light_off_time
+        else:
+            start, end = self.light_off_time
+            mx = np.logical_and(start <= self.lap_time, self.lap_time <= end)
+
+        ret = self.trial_index[mx]
 
         return int(ret[0]) + tol, int(ret[-1])
+
+    def get_light_end_trange(self, tol: int = 4) -> tuple[int, int]:
+        """If light-on again"""
+        if self.endswith_dark():
+            raise RuntimeError('end with dark')
+
+        _, start = self.get_dark_trange(tol=tol)
+
+        return start, int(self.n_trials - 1)
 
     @property
     def position_cache_file(self) -> Path:

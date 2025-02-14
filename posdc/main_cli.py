@@ -235,7 +235,7 @@ class PositionDecodeOptions(AbstractParser):
     )
 
     no_interactive: bool = argument(
-        '--no-interact',
+        '--no-qt',
         group=GROUP_PLOTTING,
         help='Do not render any interactive qt plot'
     )
@@ -342,14 +342,19 @@ class PositionDecodeOptions(AbstractParser):
         sz = len(self.train_test_list)
         return self.train_test_list[self._current_train_test_index % sz]
 
-    def get_test_trials(self, session: Literal['light', 'dark']) -> np.ndarray:
+    def get_test_trials(self, session: Literal['light', 'dark', 'light_end']) -> np.ndarray:
         test_trials = self._current_test_trials[:-1]  # exclude last incomplete
-        if session == 'light':
-            return test_trials[test_trials <= self.dat.light_off_lap]
-        elif session == 'dark':
-            return test_trials[test_trials >= self.dat.light_off_lap + 4]  # tol
-        else:
-            raise ValueError('')
+
+        match session:
+            case 'light':
+                return test_trials[test_trials < self.dat.light_off_lap]
+            case 'dark':
+                mx = np.logical_and(self.dat.light_off_lap < test_trials, test_trials < self.dat.light_end_lap)
+                return test_trials[mx]  # with tol
+            case 'light_end':
+                return test_trials[test_trials >= self.dat.light_end_lap]
+            case _:
+                raise ValueError(f'unknown session: {session}')
 
     def get_number_iter(self) -> int:
         match self.cross_validation, self.n_repeats:
@@ -554,7 +559,9 @@ class PositionDecodeOptions(AbstractParser):
         predict_pos = np.argmax(pr, axis=1) * self.spatial_bin_size
 
         #
-        binned_err_light, binned_err_dark = self.calc_position_binned_error(time, predict_pos, actual_pos)
+        binned_err_light, binned_err_dark, binned_err_light_end = self.calc_position_binned_error(
+            time, predict_pos, actual_pos
+        )
 
         if not self.ignore_foreach_plot and not self.no_interactive:
             self.plot_decode_foreach(
@@ -564,15 +571,16 @@ class PositionDecodeOptions(AbstractParser):
                 fr_raw.T,
                 binned_err_light,
                 binned_err_dark,
-                self.dat.light_off_time,
+                binned_err_light_end,
+                dat.light_off_time,
                 ylabel,
                 time_mask=self.time_mask,
                 train_pos=train_pos,
                 train_time=train_time
-
             )
 
-        self.log_output_csv(test, time, predict_pos, actual_pos, binned_err_light[0], binned_err_dark[0])
+        self.log_output_csv(test, time, predict_pos, actual_pos,
+                            binned_err_light[0], binned_err_dark[0], binned_err_light_end[0])
 
     def log_output_csv(self, test: TrialSelection,
                        time: np.ndarray,
@@ -580,6 +588,7 @@ class PositionDecodeOptions(AbstractParser):
                        actual_pos: np.ndarray,
                        binned_err_light: np.ndarray,
                        binned_err_dark: np.ndarray,
+                       binned_err_light_end: np.ndarray,
                        *,
                        agg_func: Literal['median', 'mean'] = 'median'):
         """
@@ -590,30 +599,52 @@ class PositionDecodeOptions(AbstractParser):
         :param pred_pos: Predicted position. `Array[float, T]`
         :param actual_pos: Actual position. `Array[float, T]`
         :param binned_err_light: Binned error in light. `Array[float, B]`
-        :param binned_err_dark: Binned error in light. `Array[float, B]`
+        :param binned_err_dark: Binned error in dark. `Array[float, B]`
+        :param binned_err_light_end: Optional, Binned error in light_end. `Array[float, B]`
         :param agg_func: numpy attribute used for aggregate. by default use ``np.median()``
         :return:
         """
-        headers = ['n_cv', 'session', 'n_trials', 'decode_err', 'trial_indices', 'binned_err']
+        dat = self.dat
 
+        headers = ['n_cv', 'session', 'n_trials', 'decode_err', 'trial_indices', 'binned_err']
         with csv_header(self._csv_output, headers, append=True) as csv:
-            mask = time < self.dat.light_off_time  # TODO if add tol 4 trials?
-            err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
+            err = self._wrap_diff(pred_pos, actual_pos, dat.trial_length)
             func = getattr(np, agg_func)
 
             def _array_to_str(array: np.ndarray) -> str:
                 return ' '.join(array.astype(np.str_).tolist())
 
-            for session in ('light', 'dark'):
+            #
+            if dat.endswith_dark():
+                fields = ['light', 'dark']
+                dark_time = dat.light_off_time
+                dark_lap = dat.light_off_lap
+                light_again_time = dat.position_time[-1]
+                light_again_lap = dat.n_trials - 1  # last
+            else:
+                fields = ['light', 'dark', 'light_end']
+                dark_time = dat.light_off_time[0]
+                dark_lap = dat.light_off_lap
+                light_again_time = dat.light_off_time[1]
+                light_again_lap = dat.get_light_end_trange()[0]
 
-                if session == 'light':
-                    error = func(err[mask])
-                    n_trials = np.count_nonzero(test.selected_trials < self.dat.light_off_lap)
-                    binned_err = binned_err_light
-                else:
-                    error = func(err[~mask])
-                    n_trials = np.count_nonzero(test.selected_trials >= self.dat.light_off_lap)
-                    binned_err = binned_err_dark
+            #
+            for session in fields:
+                match session:
+                    case 'light':
+                        error = func(err[(time < dark_time)])
+                        n_trials = np.count_nonzero(test.selected_trials < dark_lap)
+                        binned_err = binned_err_light
+                    case 'dark':
+                        mx = np.logical_and(dark_time < time, time < light_again_time)
+                        error = func(err[mx])
+                        mxl = np.logical_and(dark_lap < test.selected_trials, test.selected_trials < light_again_lap)
+                        n_trials = np.count_nonzero(mxl)
+                        binned_err = binned_err_dark
+                    case 'light_end':
+                        error = func(err[light_again_time < time])
+                        n_trials = np.count_nonzero(light_again_lap < test.selected_trials)
+                        binned_err = binned_err_light_end
 
                 trials = _array_to_str(self.get_test_trials(session))
                 binned_err = _array_to_str(binned_err)
@@ -633,7 +664,8 @@ class PositionDecodeOptions(AbstractParser):
 
         return df
 
-    def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_err, dark_err, light_off_time, ylabel, *,
+    def plot_decode_foreach(self, time, pred_pos, actual_pos, fr_raw, light_err, dark_err, light_end_err,
+                            light_off_time, ylabel, *,
                             time_mask: tuple[float, float] | None = None,
                             train_pos: np.ndarray | None = None,
                             train_time: np.ndarray | None = None):
@@ -646,6 +678,7 @@ class PositionDecodeOptions(AbstractParser):
         :param fr_raw: Raw firing. `Array[float, [Traw, N | N']]`
         :param light_err: Binned decoding error in light session. `Array[float, [2, B]]`
         :param dark_err: Binned decoding error in dark session. `Array[float, [2, B]]`
+        :param light_end_err: Optional, Binned decoding error in light_end session. `Array[float, [2, B]]`
         :param light_off_time: Time of light off in sec
         :param ylabel: ylabel for the firing activity
         :param time_mask: Time mask interval. (START, END) in sec.
@@ -678,8 +711,9 @@ class PositionDecodeOptions(AbstractParser):
         #
         filename = self.dat.filepath.stem + f'_decode_foreach_cv{self._current_train_test_index}.pdf'
         output = self.output_dir / filename if self.output_dir else None
+        nrow = 2 if light_end_err is None else 3
 
-        with plot_figure(output, 7, 2, figsize=(12, 8)) as _ax:
+        with plot_figure(output, 7, nrow, figsize=(12, 8)) as _ax:
             ax0 = ax_merge(_ax)[:2, :]
             plot_decode_actual_position(ax0, time, pred_pos, actual_pos, time_mask=time_mask)
 
@@ -687,7 +721,7 @@ class PositionDecodeOptions(AbstractParser):
                 plot_train_position(ax0, train_time, train_pos)
 
             ax1 = ax_merge(_ax)[2:4, :]
-            plot_firing_rate(ax1, raw_time, fr_raw, time_mask=self.time_mask, ylabel=ylabel)
+            plot_firing_rate(ax1, raw_time, fr_raw, time_mask=self.time_mask, smooth=self.smooth_fr, ylabel=ylabel)
             ax1.sharex(ax0)
 
             ax2 = ax_merge(_ax)[4:6, :]
@@ -702,10 +736,17 @@ class PositionDecodeOptions(AbstractParser):
 
             ax = _ax[6, 1]
             plot_binned_decoding_error(ax, self.trial_length, dark_err[0], dark_err[1])
-            ax.sharey(_ax[4, 0])
+            ax.sharey(_ax[6, 0])
             ax.set_title('dark')
 
-    def calc_position_binned_error(self, time, pred_pos, actual_pos) -> tuple[np.ndarray, np.ndarray]:
+            if light_end_err is not None:
+                ax = _ax[6, 2]
+                plot_binned_decoding_error(ax, self.trial_length, light_end_err[0], light_end_err[1])
+                ax.sharey(_ax[6, 0])
+                ax.set_title('light_end')
+
+    def calc_position_binned_error(self,
+                                   time, pred_pos, actual_pos) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
         """
         Take all the cv results of trial-averaged decoding error as a function of position bins
 
@@ -729,7 +770,13 @@ class PositionDecodeOptions(AbstractParser):
         light_ret = get_binned_error(light_trials)
         dark_ret = get_binned_error(dark_trials)
 
-        return light_ret, dark_ret
+        if not self.dat.endswith_dark():
+            light_end_trials = self.get_test_trials('light_end')
+            light_end_ret = get_binned_error(light_end_trials)
+        else:
+            light_end_ret = None
+
+        return light_ret, dark_ret, light_end_ret
 
     def plot_decode_cv(self):
         """Plot decode summary cross-validation testset results"""

@@ -36,6 +36,7 @@ def plot_decode_actual_position(ax: Axes,
 
     ax.legend()
 
+
 def plot_train_position(ax: Axes, time: np.ndarray, pos: np.ndarray):
     kwargs = {'markerfacecolor': None, 'markersize': 3}
     ax.plot(time, pos, 'g.', label='train', alpha=0.5, **kwargs)
@@ -43,7 +44,13 @@ def plot_train_position(ax: Axes, time: np.ndarray, pos: np.ndarray):
     ax.legend()
 
 
-def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, time_mask: tuple[float, float] | None, **kwargs):
+# noinspection PyTypeChecker
+def plot_firing_rate(ax: Axes,
+                     time: np.ndarray,
+                     fr: np.ndarray,
+                     time_mask: tuple[float, float] | None,
+                     smooth: bool = False,
+                     **kwargs):
     """
     Heatmap for activity
 
@@ -51,6 +58,7 @@ def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, time_mask: tupl
     :param time: Activity time. `Array[float, T]`
     :param fr: Neural activity. `Array[float, [N, T]]`
     :param time_mask: Time masking (START, END)
+    :param smooth
     :param kwargs: Additional arguments pass to ``ax.set()``
     """
     if time_mask is None:
@@ -58,25 +66,30 @@ def plot_firing_rate(ax: Axes, time: np.ndarray, fr: np.ndarray, time_mask: tupl
 
     ax.imshow(fr.T, aspect='auto',
               cmap='Greys',
-              # interpolation='none',
+              interpolation='auto' if smooth else 'none',
               origin='lower',
               extent=(*time_mask, 0, fr.shape[1]))
     ax.set(**kwargs)
 
 
-def plot_decoding_error(ax: Axes, time: np.ndarray, error: np.ndarray, cutoff: float):
+def plot_decoding_error(ax: Axes, time: np.ndarray, error: np.ndarray, time_ann: float | tuple[float, float]):
     """
     Plot decoding error as a function of temporal bins
 
     :param ax: ``Axes``
     :param time: Time for decoding error. `Array[float, T]`
     :param error: Decoding error. `Array[float, T]`
-    :param cutoff: Axvline cutoff for the different recording session (condition)
+    :param time_ann: Axvline time annotation for the different recording session (condition)
     """
     ax.plot(time, error, 'k.', alpha=0.3, label='frame-wise')
     smooth_err = gaussian_filter1d(error, 10)
     ax.plot(time, smooth_err, 'k.', label='smooth')
-    ax.axvline(cutoff, color='r', linestyle='--')
+
+    if isinstance(time_ann, (float, int)):
+        time_ann = tuple([time_ann])
+    for line in time_ann:
+        ax.axvline(line, color='r', linestyle='--')
+
     ax.set(xlabel='time(sec)', ylabel='decoding error (cm)', ylim=(0, 70))
     ax.legend()
 
