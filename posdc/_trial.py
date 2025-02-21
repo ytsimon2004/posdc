@@ -1,4 +1,5 @@
 import numpy as np
+from neuralib.util.segments import segment_bool_mask
 from typing_extensions import Self
 
 from ._io import PositionDecodeInput
@@ -169,6 +170,11 @@ class TrialSelection:
         ret = a[trial_index]
 
         return ret
+
+    def segment_time(self, t: np.ndarray) -> np.ndarray:
+        """Array[float, [S, 2]]"""
+        mx = self.masking_time(t)
+        return segment_bool_mask(mx)
 
     def select_fraction(self, train_fraction: float, seed: int | None = None) -> tuple[Self, Self]:
         """

@@ -540,11 +540,14 @@ class PositionDecodeOptions(AbstractParser):
         # actual (train set)
         if self.with_train_position:
             t_mask = train.masking_time(time)
+            t_seg = train.segment_time(time)
             train_pos = position[t_mask]
             train_time = time[t_mask]
+            train_seg_time = time[t_seg]
         else:
             train_pos = None
             train_time = None
+            train_seg_time = None
 
         # actual (test set)
         t_mask = test.masking_time(time)
@@ -576,7 +579,8 @@ class PositionDecodeOptions(AbstractParser):
                 ylabel,
                 time_mask=self.time_mask,
                 train_pos=train_pos,
-                train_time=train_time
+                train_time=train_time,
+                train_seg_time=train_seg_time
             )
 
         self.log_output_csv(test, time, predict_pos, actual_pos,
@@ -668,7 +672,8 @@ class PositionDecodeOptions(AbstractParser):
                             light_off_time, ylabel, *,
                             time_mask: tuple[float, float] | None = None,
                             train_pos: np.ndarray | None = None,
-                            train_time: np.ndarray | None = None):
+                            train_time: np.ndarray | None = None,
+                            train_seg_time: np.ndarray | None = None):
         """
         Plot decode results foreach iteration
 
@@ -698,6 +703,8 @@ class PositionDecodeOptions(AbstractParser):
             time = time[mx]
             pred_pos = pred_pos[mx]
             actual_pos = actual_pos[mx]
+            if pred_pos.size == 0 or actual_pos.size == 0:
+                raise RuntimeError('empty datapoint in the selected time interval')
 
             raw_mx = np.logical_and(raw_time > start, raw_time < end)
             raw_time = raw_time[raw_mx]
@@ -726,7 +733,7 @@ class PositionDecodeOptions(AbstractParser):
 
             ax2 = ax_merge(_ax)[4:6, :]
             err = self._wrap_diff(pred_pos, actual_pos, self.dat.trial_length)
-            plot_decoding_error(ax2, time, err, light_off_time)
+            plot_decoding_error(ax2, time, err, time_ann=light_off_time, train_seg_time=train_seg_time)
             ax2.sharex(ax0)
 
             # position binned

@@ -25,7 +25,7 @@ def plot_decode_actual_position(ax: Axes,
     :param actual_pos: Actual animal's position. `Array[float, T]`
     :param time_mask: Time masking (START, END)
     """
-    plot_kw = {'markerfacecolor': None, 'markersize': 3}
+    plot_kw = {'markerfacecolor': None, 'markersize': 6}
     ax.plot(time, predicted_pos, 'r.', label='decoded', alpha=0.5, **plot_kw)
     ax.plot(time, actual_pos, 'k.', label='actual position', alpha=0.3, **plot_kw)
 
@@ -38,7 +38,7 @@ def plot_decode_actual_position(ax: Axes,
 
 
 def plot_train_position(ax: Axes, time: np.ndarray, pos: np.ndarray):
-    kwargs = {'markerfacecolor': None, 'markersize': 3}
+    kwargs = {'markerfacecolor': None, 'markersize': 6}
     ax.plot(time, pos, 'g.', label='train', alpha=0.5, **kwargs)
     ax.set(ylabel='position(cm)')
     ax.legend()
@@ -72,7 +72,13 @@ def plot_firing_rate(ax: Axes,
     ax.set(**kwargs)
 
 
-def plot_decoding_error(ax: Axes, time: np.ndarray, error: np.ndarray, time_ann: float | tuple[float, float]):
+def plot_decoding_error(ax: Axes,
+                        time: np.ndarray,
+                        error: np.ndarray,
+                        *,
+                        time_ann: float | tuple[float, float],
+                        with_smooth: bool = False,
+                        train_seg_time: np.ndarray | None = None):
     """
     Plot decoding error as a function of temporal bins
 
@@ -80,15 +86,24 @@ def plot_decoding_error(ax: Axes, time: np.ndarray, error: np.ndarray, time_ann:
     :param time: Time for decoding error. `Array[float, T]`
     :param error: Decoding error. `Array[float, T]`
     :param time_ann: Axvline time annotation for the different recording session (condition)
+    :param with_smooth: frame-wise smoothing plot
+    :param train_seg_time: Time segments for the train dataset. `Array[float, [S, 2]]`
     """
     ax.plot(time, error, 'k.', alpha=0.3, label='frame-wise')
-    smooth_err = gaussian_filter1d(error, 10)
-    ax.plot(time, smooth_err, 'k.', label='smooth')
 
+    if with_smooth:
+        smooth_err = gaussian_filter1d(error, 10)
+        ax.plot(time, smooth_err, 'k.', label='smooth')
+    #
     if isinstance(time_ann, (float, int)):
         time_ann = tuple([time_ann])
     for line in time_ann:
         ax.axvline(line, color='r', linestyle='--')
+
+    #
+    if train_seg_time is not None:
+        for interval in train_seg_time:
+            ax.axvspan(interval[0], interval[1], color='g', alpha=0.2)
 
     ax.set(xlabel='time(sec)', ylabel='decoding error (cm)', ylim=(0, 70))
     ax.legend()
