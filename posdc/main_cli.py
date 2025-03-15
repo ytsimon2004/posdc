@@ -7,7 +7,7 @@ import numpy as np
 import polars as pl
 import scipy
 from neuralib.argp import AbstractParser, argument, float_tuple_type
-from neuralib.calimg.suite2p import normalize_signal
+from neuralib.imaging.suite2p import normalize_signal
 from neuralib.io import csv_header
 from neuralib.model.bayes_decoding import place_bayes
 from neuralib.plot import plot_figure, violin_boxplot, ax_merge
@@ -124,6 +124,7 @@ class PositionDecodeOptions(AbstractParser):
         '--cv',
         type=int,
         default=None,
+        validator=lambda it: it is None or 0 < it <= 10,
         group=GROUP_TRAIN_TEST,
         help='N-fold for model cross validation',
     )
@@ -146,6 +147,7 @@ class PositionDecodeOptions(AbstractParser):
         '--train-fraction',
         type=float,
         default=0.8,
+        validator=lambda it: 0 < it < 1,
         group=GROUP_TRAIN_TEST,
         help='fraction of data for train set if `random_split` in cv, the rest will be utilized in test set.'
              '(require for --train=random-split)'
@@ -210,15 +212,18 @@ class PositionDecodeOptions(AbstractParser):
     time_mask: tuple[float, float] | None = argument(
         '--time-mask',
         type=float_tuple_type,
+        default=None,
+        validator=lambda it: it is None or len(it) == 2,
         group=GROUP_PLOTTING,
         help='time mask for plotting. (START, END) in seconds',
     )
 
-    perc_norm: tuple[float, float] = argument(
+    perc_norm: tuple[float, float] | None = argument(
         '--perc-norm',
         type=float_tuple_type,
-        group=GROUP_PLOTTING,
         default=None,
+        validator=lambda it: it is None or len(it) == 2,
+        group=GROUP_PLOTTING,
         help='Lower and upper percentile bounds for the fr_raw, for the visualization of population activity'
     )
 

@@ -47,6 +47,8 @@ options:
   -h, --help            show this help message and exit
   -F FILE, --file FILE  hdf data file path
   --deconv              use deconv activity, otherwise, df_f
+  --load-backend {numpy,pandas}
+                        backend for loading data, default is `pandas`
 
 Decoding Option:
   --length VALUE        trial length in cm
@@ -57,24 +59,35 @@ Decoding Option:
   --invalid-cache       invalid all the cache, and recompute
 
 Train/Test Option:
-  --train NAME           train the decoder in which behavioral session
-  --cv CROSS_VALIDATION  nfold for model cross validation
-  --no-shuffle           whether without shuffle the data for non-repeated cv
-  --repeats N_REPEATS    run as repeat kfold cv, make number of results to `n_cv * n_repeats`
-  --train-fraction TRAIN_FRACTION 
-                         fraction of data for train set if `random_split` in cv, the rest will be utilized in test set.(require for --train=random-split)
+  --train NAME          train the decoder in which behavioral session
+  --cv CROSS_VALIDATION
+                        N-fold for model cross validation
+  --no-shuffle          whether without shuffle the data for non-repeated cv
+  --repeats N_REPEATS   run as repeated kfold cv, make number of results to `n_cv * n_repeats`
+  --train-fraction TRAIN_FRACTION
+                        fraction of data for train set if `random_split` in cv, the rest will be utilized in test set.(require for --train=random-split)
 
 Random Option:
-  --random-neuron NUMBER number of random neurons
-  --seed VALUE           seed for random number generator
+  --random-neuron NUMBER
+                        number of random neurons. If None, then use all neurons
+  --seed VALUE          seed for random number generator
 
 Rastermap sorting Options:
-  --rastermap            sort activity heatmap using rastermap
-  --rastermap-bin VALUE  bin size for number of total neurons
+  --rastermap           sort activity heatmap using rastermap
+  --rastermap-bin VALUE
+                        bin size for number of total neurons
 
 Plotting Options:
-  --ignore-foreach       whether to ignore foreach cv plot, and only plot the summary result
-  -O PATH, --output PATH output figures to a directory
+  --smooth              Do smooth of raw firing (N, T) heatmap
+  --time-mask TIME_MASK
+                        time mask for plotting. (START, END) in seconds
+  --perc-norm PERC_NORM
+                        Lower and upper percentile bounds for the fr_raw, for the visualization of population activity
+  --with-train          plot the train set trials
+  --ignore-foreach      whether to ignore foreach cv plot, and only plot the summary result
+  --no-qt               Do not render any interactive qt plot
+  -O PATH, --output PATH
+                        output figures to a directory
 
 ```
 
