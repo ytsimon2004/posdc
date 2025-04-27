@@ -18,6 +18,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "argclz",
     "neura-library",
     "typing-extensions",
     "rastermap",

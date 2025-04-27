@@ -71,7 +71,6 @@ class PositionDecodeInput(NamedTuple):
         :param backend: Backend for loading data, default is 'pandas'
         :return: ``PositionDecodeInput``
         """
-
         if backend == 'pandas':
             return cls._load_hdf(file, use_deconv, trial_length)
         elif backend == 'numpy':

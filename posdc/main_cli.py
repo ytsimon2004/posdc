@@ -6,7 +6,7 @@ from typing import Literal
 import numpy as np
 import polars as pl
 import scipy
-from neuralib.argp import AbstractParser, argument, float_tuple_type
+from argclz import AbstractParser, argument, float_tuple_type
 from neuralib.imaging.suite2p import normalize_signal
 from neuralib.io import csv_header
 from neuralib.model.bayes_decoding import place_bayes
